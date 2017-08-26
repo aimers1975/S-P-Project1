@@ -4,21 +4,33 @@
 //#include <sys/types.h>
 //#include <sys/wait.h>
 #include <string.h>
+#include <signal.h>
 
 #define MAX_BUFFER 200
-typedef int bool;
 #define true 1
 #define false 0
 
+extern char** environ;
+
+typedef int bool;
+
 void runInputLoop(char*);
-//void parseInput(char* buf, ssize_t bufsize);
 void parseInput(char*, char*, bool*, bool*);
 char* collectInput();
+void handleSignal(int);
+
 
 int main(int argc, char** args) 
 {
   char buf[MAX_BUFFER];
+  const char* path = getenv("PATH");
+
+  printf("PATH :%s\n", (path!=NULL)? path : "getenv returned NULL");
+  signal(SIGTSTP, &handleSignal);
+  signal(SIGCHLD, &handleSignal);
+  signal(SIGINT, &handleSignal);
   runInputLoop(buf);
+
 }
 
 void runInputLoop(char* buf ) {
@@ -29,8 +41,11 @@ void runInputLoop(char* buf ) {
   	bool pipe = false;
   	bool bg = false;
     printf("# ");
+    char* env_list[] = {};
     buf = collectInput();
     parseInput(buf, buf2, &pipe, &bg);
+
+
     if(pipe) {
     	printf(" There was a pipe\n");
     }
@@ -43,8 +58,6 @@ void runInputLoop(char* buf ) {
 
 char* collectInput() 
 {
-  //ssize_t bufsize = 0;
-  //getline(&buf, &bufsize, stdin);
   int position = 0;
   int bufsize = MAX_BUFFER;
   char* buffer = malloc(sizeof(char) * bufsize);
@@ -93,12 +106,38 @@ void parseInput(char* buf, char* buf2, bool* pipe, bool* bg)
 			buf[i] = '\0';
 		} else if (*bg) {
 			buf[i] = '\0';
+		} else if (buf[i] == '<') {
+
+		} else if (buf[i] == '>') {
+
 		}
 	}
 	printf("Command 1: %s\n", buf);
 	printf("Command 2: %s\n", buf2);
-
-
 }
 
-//scanf("%200[0-9a-zA-Z,.<>\?/;\':\"|-=_+()`\\~!@#$%^&*' ]", buf);
+void handleSignal(int signal) {
+  const char* signal_name;
+  sigset_t pending;
+  printf("This signal: %d", signal);
+
+  switch(signal) {
+  	case SIGINT:
+  	  signal_name = "SIGINT";
+  	  printf("signal is: %s\n", signal_name);
+  	  break;
+  	case SIGTSTP:
+  	  signal_name = "SIGTSTP";
+  	  printf("signal is: %s\n", signal_name);
+  	  break;
+  	case SIGCHLD:
+  	  signal_name = "SIGCHLD";
+  	  printf("signal is: %s\n", signal_name);
+  	  break;
+  	default:
+  	  printf("Can't find signal.");
+  	  return;
+
+  }
+}
+
