@@ -60,10 +60,10 @@ void runInputLoop(char* buf ) {
         parseInput(buf, buf2, &pipe, &bg);
 
         if(pipe) {
-    	    printf(" There was a pipe\n");
+    	    //printf(" There was a pipe\n");
         }
         if(bg) {
-            printf(" There was a bg request\n");
+            //printf(" There was a bg request\n");
         }
     }
   
@@ -98,9 +98,9 @@ char* collectInput()
 //void parseInput(char* buf, ssize_t bufsize) 
 void parseInput(char* buf, char* buf2, bool* pipe, bool* bg)
 {
-	printf("\n You wrote: %s", buf);
-	printf("\n The buffer size was: %zd\n", strlen(buf));
-	printf(" Pipe is: %d\n", *pipe);
+	printf("You wrote: %s\n", buf);
+	//printf("\n The buffer size was: %zd\n", strlen(buf));
+	//printf(" Pipe is: %d\n", *pipe);
 	int position = 0;
 	for(int i=0; i < 200; i++) {
 		if(buf[i] == '|' && !*pipe) {
@@ -130,7 +130,7 @@ void parseInput(char* buf, char* buf2, bool* pipe, bool* bg)
 void handleSignal(int signal) {
     const char* signal_name;
     sigset_t pending;
-    printf("This signal: %d", signal);
+    printf("This signal: %d\n", signal);
 
     switch(signal) {
   	    case SIGINT:
@@ -146,7 +146,7 @@ void handleSignal(int signal) {
   	        printf("signal is: %s\n", signal_name);
   	        break;
   	    default:
-  	        printf("Can't find signal.");
+  	        printf("Can't find signal.\n");
   	        return;
     }
 }
@@ -160,8 +160,12 @@ char* trimTrailingWhitespace(char* buf) {
 }
 
 void* removeExcess(char** buf, int trimNum) {
+	//printf("Removing excess buf at index: %d\n", trimNum);
+	if (trimNum == 0) {
+		return NULL;
+	}
 	char** cmds = malloc(sizeof(char*) * trimNum);
-	memcpy(cmds, buf, trimNum);
+	memcpy(cmds, buf, (sizeof(char*) * trimNum));
 	return cmds;
 }
 
@@ -170,13 +174,14 @@ struct Command createCommand(char* buf) {
 	int numCmds = 1;
 	bool isFor = true;
 	char* isRunning = "Stopped";
-
+    // Find number of strings in this array
 	for(int i=0; i<strlen(buf); i++) {
 		if(buf[i] == ' ' || buf[i] == '\0') 
 		{
 			numCmds++;
 		}
 	}
+    // Get all the strings divided by spaces
 	char** cmds = malloc(sizeof(char*) * numCmds);
 	char* token = strtok(buf, " ");
 	int position = 0;
@@ -186,37 +191,36 @@ struct Command createCommand(char* buf) {
 		position++;
 		token = strtok(NULL, " ");
 	}
-//	bool bg = false;
+
+    // Figure if this command will be a background process
 	char* infile = "";
 	char* outfile = "";
 	for(int i=0; i < numCmds; i++) {
-		printf("Comparing:*%s* and *>*\n", cmds[i]);
 		if((strcmp(cmds[i],"&") == 0) && isFor) {
             isFor = false;
-            cmds = removeExcess(cmds,i);
-            printf("Found &\n");
-            numCmds = i;
+            //cmds = removeExcess(cmds,i);
+            numCmds--;
             break;
-		} else if (strcmp(cmds[i], "<") == 0) {
+        }
+    }   
+
+    // Get in and outfiles
+    int lastCmd = 0;
+	printf("Num commands is now: %d\n", numCmds);
+	for(int i=0; i<numCmds; i++) {
+	   if (strcmp(cmds[i], "<") == 0) {
             infile = cmds[i + 1];
-            cmds = removeExcess(cmds,i);
             printf("Found <\n");
-            numCmds = i;
-            break;
+            if(lastCmd == 0) lastCmd = i;
+            printf("Numcmds: %d lastCmd: %d\n", numCmds, lastCmd);
 		} else if (strcmp(cmds[i], ">") == 0) {
             outfile = cmds[i + 1];
-            cmds = removeExcess(cmds,i);
             printf("Found >\n");
-            numCmds = i;
-            break;
+            if(lastCmd == 0) lastCmd = i;
 		} 
 	}	
-
-	printf("Command is Running: %s\n", isRunning);
-	printf("Command is For: %d\n", isFor);
-	printf("Command numCmds: %d\n", numCmds);
-	printf("Command outfile: %s\n", outfile);
-	printf("Command infile: %s\n", infile);
+	if (lastCmd < numCmds) numCmds = lastCmd;
+	cmds = removeExcess(cmds, numCmds);
 
 
 	struct Command thisCommand = {isRunning, isFor, cmds, numCmds, outfile,infile};
