@@ -2,7 +2,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 //#include <sys/types.h>
-//#include <sys/wait.h>
+#include <sys/wait.h>
 #include <string.h>
 #include <signal.h>
 
@@ -26,7 +26,7 @@ struct Command
 };
 
 void runInputLoop(char*);
-void parseInput(char*, char*, bool*, bool*);
+struct Command parseInput(char*, char*, bool*, bool*);
 char* collectInput();
 void handleSignal(int);
 char* trimTrailingWhitespace(char*);
@@ -39,7 +39,7 @@ int main(int argc, char** args)
     char buf[MAX_BUFFER];
     const char* path = getenv("PATH");
 
-    printf("PATH :%s\n", (path!=NULL)? path : "getenv returned NULL");
+    //printf("PATH :%s\n", (path!=NULL)? path : "getenv returned NULL");
     signal(SIGTSTP, &handleSignal);
     signal(SIGCHLD, &handleSignal);
     signal(SIGINT, &handleSignal);
@@ -54,17 +54,27 @@ void runInputLoop(char* buf ) {
   	    char* buf2 = malloc(sizeof(char) * MAX_BUFFER);
   	    bool pipe = false;
   	    bool bg = false;
+  	    struct Command* jobs;
         printf("# ");
         char* env_list[] = {};
         buf = collectInput();
-        parseInput(buf, buf2, &pipe, &bg);
+        struct Command thisJob = parseInput(buf, buf2, &pipe, &bg);
+        pid_t ret = fork();
+        if (ret == 0) 
+        {
+        	// Child
+        	execv(thisJob.cmd[0], thisJob.cmd);
+        	printf("Started pid: %uz\n", ret);
+        } else if (ret < 0) 
+        {
 
-        if(pipe) {
-    	    //printf(" There was a pipe\n");
+        } 
+        int status;	
+        if (thisJob.isForeground) {
+        	printf("Checking if foreground\n");
+        	waitpid(ret, &status, 0);
         }
-        if(bg) {
-            //printf(" There was a bg request\n");
-        }
+
     }
   
 }
@@ -96,11 +106,12 @@ char* collectInput()
 }
 
 //void parseInput(char* buf, ssize_t bufsize) 
-void parseInput(char* buf, char* buf2, bool* pipe, bool* bg)
+struct Command parseInput(char* buf, char* buf2, bool* pipe, bool* bg)
 {
 	printf("You wrote: %s\n", buf);
 	//printf("\n The buffer size was: %zd\n", strlen(buf));
 	//printf(" Pipe is: %d\n", *pipe);
+
 	int position = 0;
 	for(int i=0; i < 200; i++) {
 		if(buf[i] == '|' && !*pipe) {
@@ -117,11 +128,14 @@ void parseInput(char* buf, char* buf2, bool* pipe, bool* bg)
 
 	buf = trimTrailingWhitespace(buf);
 	buf2 = trimTrailingWhitespace(buf2);
-	printf("Command 1: %s", buf);
-	printf("end\n");
-	printf("Command 2: %s", buf2);
-	printf("end\n");
-	createCommand(buf);
+	//printf("Command 1: %s", buf);
+	//printf("end\n");
+	//printf("Command 2: %s", buf2);
+	//printf("end\n");
+	printf(" Calling create command\n");
+	struct Command retCmd = createCommand(buf);
+	printf("Cmd: %s\n", retCmd.cmd[0]);
+	return retCmd;
 	if(*pipe) {
 	    createCommand(buf2);
 	}    	
@@ -160,7 +174,6 @@ char* trimTrailingWhitespace(char* buf) {
 }
 
 void* removeExcess(char** buf, int trimNum) {
-	//printf("Removing excess buf at index: %d\n", trimNum);
 	if (trimNum == 0) {
 		return NULL;
 	}
@@ -198,7 +211,6 @@ struct Command createCommand(char* buf) {
 	for(int i=0; i < numCmds; i++) {
 		if((strcmp(cmds[i],"&") == 0) && isFor) {
             isFor = false;
-            //cmds = removeExcess(cmds,i);
             numCmds--;
             break;
         }
@@ -207,6 +219,7 @@ struct Command createCommand(char* buf) {
     // Get in and outfiles
     int lastCmd = 0;
 	printf("Num commands is now: %d\n", numCmds);
+	printf("Last command is now: %d\n", lastCmd);
 	for(int i=0; i<numCmds; i++) {
 	   if (strcmp(cmds[i], "<") == 0) {
             infile = cmds[i + 1];
@@ -219,16 +232,16 @@ struct Command createCommand(char* buf) {
             if(lastCmd == 0) lastCmd = i;
 		} 
 	}	
-	if (lastCmd < numCmds) numCmds = lastCmd;
+	if (lastCmd < numCmds && lastCmd != 0) numCmds = lastCmd;
 	cmds = removeExcess(cmds, numCmds);
 
 
-	struct Command thisCommand = {isRunning, isFor, cmds, numCmds, outfile,infile};
-	printf("Command is Running: %s\n", thisCommand.isRunning);
-	printf("Command is For: %d\n", thisCommand.isForeground);
-	printf("Command numCmds: %d\n", thisCommand.numCmds);
-	printf("Command outfile: %s\n", thisCommand.outfile);
-	printf("Command infile: %s\n", thisCommand.infile);
+	struct Command thisCommand = {isRunning, isFor, cmds, numCmds, outfile, infile};
+	//printf("Command is Running: %s\n", thisCommand.isRunning);
+	//printf("Command is For: %d\n", thisCommand.isForeground);
+	//printf("Command numCmds: %d\n", thisCommand.numCmds);
+	//printf("Command outfile: %s\n", thisCommand.outfile);
+	//printf("Command infile: %s\n", thisCommand.infile);
 	return thisCommand;
 }
 
