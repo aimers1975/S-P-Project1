@@ -60,8 +60,7 @@ void runInputLoop(char* buf ) {
   	    bool haspipe = false;
   	    bool bg = false;
   	    struct Command* jobs;
-  	    int fd1;
-  	    int fd2;
+  	    int fd1, fd2, status;
   	    int numPaths = 0;
   	    char* path = getenv("PATH");
   	    char* currpath = malloc(strlen(path));
@@ -78,7 +77,7 @@ void runInputLoop(char* buf ) {
         	// Child
 
         	if(haspipe) {
-        		printf("Got a pipe, need to send output");
+        		printf("Got a pipe, need to send output\n");
         	//	close(pfd[1]);
         	//	dup2(pfd[0], 0);
         	//	close(pfd[0]);
@@ -99,18 +98,34 @@ void runInputLoop(char* buf ) {
         		}
         	}
 
-        	printf("About to call exec\n");
+        	printf("About to call exec: %s\n", thisJob[0].cmd[0]);
         	execvpe(thisJob[0].cmd[0], thisJob[0].cmd, environ);
         	//execv(thisJob.cmd[0], thisJob.cmd);
-        	printf("Started pid: %uz\n", ret);
+        	printf("Started pid: %d\n", ret);
+        	exit(1);
         } else if (ret < 0) 
         {
 
-        } 
-        int status;	
+        } else if (haspipe) {
+        	ret = fork();
+        	printf("Parent here cpid: %d pid: %d\n", ret, getpid());
+        	if(ret ==0) {
+                printf("The second child pid: %d\n", getpid());
+                exit(2);
+            } else { 
+
+
+            }
+            
+        }	
         if (thisJob[0].isForeground) {
         	printf("Checking if foreground\n");
-        	waitpid(ret, &status, 0);
+        	printf("Calling first wait pid: %d, ret: %d\n", getpid(), ret);
+        	waitpid(ret, &status, 0);  
+        	if(haspipe) {
+        	    printf("Calling second wait pid: %d, ret: %d\n", getpid(), ret);
+        	    waitpid(0, &status, 0);
+        	}          	
         }
 
     }
