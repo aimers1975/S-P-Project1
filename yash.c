@@ -61,6 +61,8 @@ void runInputLoop(char* buf ) {
   	    bool bg = false;
   	    struct Command* jobs;
   	    int fd1, fd2, status;
+  	    int pipefd[2];
+  	    char ch[2]={0,0}, pch=128;
   	    int numPaths = 0;
   	    char* path = getenv("PATH");
   	    char* currpath = malloc(strlen(path));
@@ -69,18 +71,26 @@ void runInputLoop(char* buf ) {
         printf("# ");
         char* env_list[] = {};
         buf = collectInput();
-        //struct Command thisJob = parseInput(buf, buf2, &haspipe, &bg);
+
         struct Command* thisJob = parseInput(buf, buf2, &haspipe, &bg);
+
+        if(haspipe) {
+        	if(pipe(pipefd) == -1) {
+        		perror("pipe");
+        		exit(-1);
+        	}
+        }
+
         pid_t ret = fork();
+
         if (ret == 0) 
         {
-        	// Child
+        	// First Child, if there is a pipe, there can't be an outfile
 
         	if(haspipe) {
-        		printf("Got a pipe, need to send output\n");
-        	//	close(pfd[1]);
-        	//	dup2(pfd[0], 0);
-        	//	close(pfd[0]);
+                dup2(pipefd[0],0);
+                close(pipefd[1]);
+
         	}
         	else if(strlen(thisJob[0].outfile) > 0) {
         		printf("Trying to open outfile: %s\n", thisJob[0].outfile);
@@ -98,35 +108,67 @@ void runInputLoop(char* buf ) {
         		}
         	}
 
-        	printf("About to call exec: %s\n", thisJob[0].cmd[0]);
+        	printf("READER calling exec: %s\n", thisJob[0].cmd[0]);
+        	printf("Started cpid: %d Current pid: %d\n", ret, getpid());
         	execvpe(thisJob[0].cmd[0], thisJob[0].cmd, environ);
-        	//execv(thisJob.cmd[0], thisJob.cmd);
-        	printf("Started pid: %d\n", ret);
+        	printf("READER exec returned\n");
+        	
         	exit(1);
         } else if (ret < 0) 
         {
 
         } else if (haspipe) {
         	ret = fork();
-        	printf("Parent here cpid: %d pid: %d\n", ret, getpid());
+        	//printf("Parent here cpid: %d pid: %d\n", ret, getpid());
         	if(ret ==0) {
-                printf("The second child pid: %d\n", getpid());
+                //printf("The first process command: %s pid: %d\n", thisJob[1].cmd[0], getpid());
+
+	        	if(haspipe) {
+                    dup2(pipefd[1],1);
+                    close(pipefd[0]);
+
+	        	} else if(strlen(thisJob[1].infile) > 0) {
+	        		printf("Trying to open: %s\n", thisJob[1].outfile);
+	        		fd2 = getFileD(thisJob[1].infile, paths, numPaths, false);
+	        		if(fd2 == -1) {
+	        			printf("There was an error opening or creating the in file.\n");
+	        		}
+	        	}
+
+	        	if(strlen(thisJob[1].outfile) > 0) {
+	        		printf("Trying to open outfile: %s\n", thisJob[1].outfile);
+	        		fd1 = getFileD(thisJob[1].outfile, paths, numPaths, true);
+	        		if(fd1 == -1)
+	        		{
+	        			printf("There was an error opening or creating the out file.\n");
+	        		}	
+	        	}
+
+                printf("Parent WRITER calling exec: %s\n", thisJob[1].cmd[0]); 
+                printf("Started cpid: %d Current pid: %d\n", ret, getpid());
+                execvpe(thisJob[1].cmd[0], thisJob[1].cmd, environ);
+                printf("WRITER exec returned\n");
                 exit(2);
-            } else { 
 
-
+            } else {
+            	//wait(&status);
+            	close(pipefd[1]);
+            	waitpid(ret, &status, 0);
+            	
             }
             
         }	
-        if (thisJob[0].isForeground) {
-        	printf("Checking if foreground\n");
-        	printf("Calling first wait pid: %d, ret: %d\n", getpid(), ret);
-        	waitpid(ret, &status, 0);  
-        	if(haspipe) {
-        	    printf("Calling second wait pid: %d, ret: %d\n", getpid(), ret);
-        	    waitpid(0, &status, 0);
-        	}          	
-        }
+        waitpid(0, &status, 0);
+        //wait(&status);
+        //if (thisJob[0].isForeground) {
+        //	printf("Checking if foreground\n");
+        	//printf("Calling first wait pid: %d, ret: %d\n", getpid(), ret);
+        //	waitpid(ret, &status, 0);  
+        //	if(haspipe) {
+        //	    printf("Calling second wait pid: %d, ret: %d\n", getpid(), ret);
+        //	    waitpid(0, &status, 0);
+        //	}          	
+        //}
 
     }
   
@@ -185,20 +227,18 @@ struct Command* parseInput(char* buf, char* buf2, bool* haspipe, bool* bg)
 	//printf("end\n");
 	//printf("Command 2: %s", buf2);
 	//printf("end\n");
-	printf(" Calling create command\n");
 	struct Command retCmd = createCommand(buf);
 	struct Command* cmdList;
+	struct Command retcmd2;
 	if(*haspipe) {
-		
-        cmdList = malloc(sizeof(struct Command*)*2);
-        cmdList[0] = retCmd;
-        cmdList[1] = createCommand(buf2);
+        cmdList = malloc(2 * sizeof(struct Command));
+        cmdList[1] = retCmd;
+        retcmd2 = createCommand(buf2);    
+        cmdList[0] = retcmd2;
 	} else {
-        cmdList = malloc(sizeof(struct Command*));
+        cmdList = malloc(sizeof(struct Command));
         cmdList[0] = retCmd;
-	}
-	printf("Cmd: %s\n", retCmd.cmd[0]);	
- 
+	}	
 	return cmdList;   	
 }
 
