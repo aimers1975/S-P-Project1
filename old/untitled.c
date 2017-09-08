@@ -39,12 +39,10 @@ char** getTokenizedList(char*, char*, int*);
 int getFileD(char*, char**, int, bool);
 
 
+
 int main(int argc, char** args) 
 {
     char buf[MAX_BUFFER];
-    const char* path = getenv("PATH");
-
-    //printf("PATH :%s\n", (path!=NULL)? path : "getenv returned NULL");
     signal(SIGTSTP, &handleSignal);
     signal(SIGCHLD, &handleSignal);
     signal(SIGINT, &handleSignal);
@@ -54,6 +52,11 @@ int main(int argc, char** args)
 
 void runInputLoop(char* buf ) {
 
+    int numPaths = 0;
+  	char* path = getenv("PATH");
+    //printf("PATH :%s\n", (path!=NULL)? path : "getenv returned NULL");
+    char** paths = getTokenizedList(path, ":", &numPaths);
+    //printf("The returned number of paths is: %d\n", numPaths);
     while(1)
     { 
   	    char* buf2 = malloc(sizeof(char) * MAX_BUFFER);
@@ -62,56 +65,69 @@ void runInputLoop(char* buf ) {
   	    struct Command* jobs;
   	    int fd1;
   	    int fd2;
-  	    int numPaths = 0;
-  	    char* path = getenv("PATH");
-  	    char* currpath = malloc(strlen(path));
-        strcpy(currpath, path);
-  	    char** paths = getTokenizedList(currpath, ":", &numPaths);
+  	    int pfd[2],status;
+  	    pid_t cpid;
+
         printf("# ");
-        char* env_list[] = {};
         buf = collectInput();
-        //struct Command thisJob = parseInput(buf, buf2, &haspipe, &bg);
         struct Command* thisJob = parseInput(buf, buf2, &haspipe, &bg);
+        // For pipe: standard in is 0, standard out is 1
+        if(haspipe) {
+            pipe(pfd);
+        }
+
         pid_t ret = fork();
         if (ret == 0) 
         {
         	// Child
-
+        	// This child writes to pipe or to a file
         	if(haspipe) {
-        		printf("Got a pipe, need to send output");
         	//	close(pfd[1]);
         	//	dup2(pfd[0], 0);
         	//	close(pfd[0]);
         	}
         	else if(strlen(thisJob[0].outfile) > 0) {
-        		printf("Trying to open outfile: %s\n", thisJob[0].outfile);
         		fd1 = getFileD(thisJob[0].outfile, paths, numPaths, true);
         		if(fd1 == -1)
         		{
-        			printf("There was an error opening or creating the out file.\n");
+        			printf("There was an error opening or creating file.\n");
         		}	
         	}
         	if(strlen(thisJob[0].infile) > 0) {
-        		printf("Trying to open: %s\n", thisJob[0].outfile);
         		fd2 = getFileD(thisJob[0].infile, paths, numPaths, false);
         		if(fd2 == -1) {
-        			printf("There was an error opening or creating the in file.\n");
+        			printf("There was an error opening or creating file.\n");
         		}
         	}
-
         	printf("About to call exec\n");
         	execvpe(thisJob[0].cmd[0], thisJob[0].cmd, environ);
-        	//execv(thisJob.cmd[0], thisJob.cmd);
         	printf("Started pid: %uz\n", ret);
         } else if (ret < 0) 
         {
-
-        } 
-        int status;	
-        if (thisJob[0].isForeground) {
-        	printf("Checking if foreground\n");
-        	waitpid(ret, &status, 0);
+            printf("There was an error.");
+        } else {
+		    printf("Parent here: %d\n", getpid());
+		    //printf("cpid: %u\n", cpid);
+		    //cpid = fork();
+		    //if(cpid == 0) {
+		    //  printf("2 Child here %d\n", getpid());
+		      // This child reads from pipe
+		    //  close(pfd[0]);
+        	//  dup2(pfd[1], 1);
+        	//  close(pfd[1]);
+		    //  execvpe(thisJob.cmd[0], thisJob.cmd, environ); 
+		    //  exit(2);
+		    //}
+		    //wait(&status);
+		    //printf("Child terminated with status: %d\n", status>>8);
+		    //wait(&status);
+		    //printf("Child terminated with status: %d\n", status>>8); 
+		    if (thisJob[0].isForeground) {
+        	    printf("Checking if foreground\n");
+        	    waitpid(ret, &status, 0);
+            }       	
         }
+
 
     }
   
@@ -148,8 +164,8 @@ struct Command* parseInput(char* buf, char* buf2, bool* haspipe, bool* bg)
 {
 	printf("You wrote: %s\n", buf);
 	//printf("\n The buffer size was: %zd\n", strlen(buf));
-	//printf(" haspipe is: %d\n", *haspipe);
-    
+	//printf(" Pipe is: %d\n", *pipe);
+
 	int position = 0;
 	for(int i=0; i < 200; i++) {
 		if(buf[i] == '|' && !*haspipe) {
@@ -165,26 +181,35 @@ struct Command* parseInput(char* buf, char* buf2, bool* haspipe, bool* bg)
 	}
 
 	buf = trimTrailingWhitespace(buf);
-	buf2 = trimTrailingWhitespace(buf2);
-	//printf("Command 1: %s", buf);
+	if(strlen(buf2) > 0) buf2 = trimTrailingWhitespace(buf2);
+	printf("Command 1: %s\n", buf);
 	//printf("end\n");
 	//printf("Command 2: %s", buf2);
 	//printf("end\n");
-	printf(" Calling create command\n");
-	struct Command retCmd = createCommand(buf);
-	struct Command* cmdList;
+	//printf(" Calling create command\n");
+	//TODO fix this
+	struct Command retCmd1 = createCommand(buf);
+	printf("Called create command\n");
+	struct Command retCmd2;
 	if(*haspipe) {
-		
-        cmdList = malloc(sizeof(struct Command*)*2);
-        cmdList[0] = retCmd;
-        cmdList[1] = createCommand(buf2);
-	} else {
-        cmdList = malloc(sizeof(struct Command*));
-        cmdList[0] = retCmd;
-	}
-	printf("Cmd: %s\n", retCmd.cmd[0]);	
- 
-	return cmdList;   	
+	   retCmd2 = createCommand(buf2);
+	}   
+	struct Command* retCmdList;
+	if(*haspipe) {
+		printf("Has pipe, calling create command\n");
+	    retCmd2 = createCommand(buf2);
+	    retCmdList = malloc(sizeof(struct Command*) *2);
+	    retCmdList[0] = retCmd1;
+	    retCmdList[1] = retCmd2;
+	} else
+	{
+		printf("Has no pipe, calling create command\n");
+		retCmdList = malloc(sizeof(struct Command*));
+		retCmdList[0] = retCmd1;
+	}   
+	printf("Cmd: %s\n", retCmd1.cmd[0]);
+	if(*haspipe) printf("Cmd2: %s\n", retCmd2.cmd[0]);	
+	return retCmdList;
 }
 
 void handleSignal(int signal) {
@@ -240,6 +265,7 @@ struct Command createCommand(char* buf) {
 			numCmds++;
 		}
 	}
+	printf("Num cmds is: %d\n", numCmds );
     // Get all the strings divided by spaces
 	char** cmds = malloc(sizeof(char*) * numCmds);
 	char* token = strtok(buf, " ");
@@ -279,15 +305,12 @@ struct Command createCommand(char* buf) {
 		} 
 	}	
 	if (lastCmd < numCmds && lastCmd != 0) numCmds = lastCmd;
+	printf("Num commands is now: %d\n", numCmds);
 	cmds = removeExcess(cmds, numCmds);
 
 
 	struct Command thisCommand = {isRunning, isFor, cmds, numCmds, outfile, infile};
-	//printf("Command is Running: %s\n", thisCommand.isRunning);
-	//printf("Command is For: %d\n", thisCommand.isForeground);
-	//printf("Command numCmds: %d\n", thisCommand.numCmds);
-	//printf("Command outfile: %s\n", thisCommand.outfile);
-	//printf("Command infile: %s\n", thisCommand.infile);
+	printf("Got a command\n");
 	return thisCommand;
 }
 
@@ -317,10 +340,8 @@ int getFileD(char* file, char** paths, int num, bool create) {
     }
     if(create)
     {	
-    	printf("Trying to open: %s\n", file);
         filed = open(file, O_RDWR|O_CREAT, 0777);
         printf("No file found, created %d\n", filed);
-        return filed;
     }    
 	return -1;
 
@@ -350,4 +371,5 @@ char** getTokenizedList(char* breakString, char* search, int* numStrings) {
 	}
 	return pathList;
 }
+
 
