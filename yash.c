@@ -91,27 +91,34 @@ void runInputLoop(char* buf ) {
                 dup2(pipefd[0],0);
                 close(pipefd[1]);
 
-        	}
-        	else if(strlen(thisJob[0].outfile) > 0) {
+        	} else if(strlen(thisJob[0].infile) > 0) {
+        		printf("Trying to open: %s\n", thisJob[0].infile);
+        		fd2 = getFileD(thisJob[0].infile, paths, numPaths, false);
+        		if(fd2 == -1) {
+        			printf("There was an error opening or creating the in file.\n");
+        		} else {
+
+        		}
+        	} 
+
+
+        	if(strlen(thisJob[0].outfile) > 0) {
         		printf("Trying to open outfile: %s\n", thisJob[0].outfile);
         		fd1 = getFileD(thisJob[0].outfile, paths, numPaths, true);
         		if(fd1 == -1)
         		{
         			printf("There was an error opening or creating the out file.\n");
+        		} else {
+        			dup2(fd1,1);
         		}	
         	}
-        	if(strlen(thisJob[0].infile) > 0) {
-        		printf("Trying to open: %s\n", thisJob[0].outfile);
-        		fd2 = getFileD(thisJob[0].infile, paths, numPaths, false);
-        		if(fd2 == -1) {
-        			printf("There was an error opening or creating the in file.\n");
-        		}
-        	}
 
-        	printf("READER calling exec: %s\n", thisJob[0].cmd[0]);
-        	printf("Started cpid: %d Current pid: %d\n", ret, getpid());
+
+        	//printf("READER calling exec: %s\n", thisJob[0].cmd[0]);
+        	//printf("Started cpid: %d Current pid: %d\n", ret, getpid());
         	execvpe(thisJob[0].cmd[0], thisJob[0].cmd, environ);
         	printf("READER exec returned\n");
+        	if (fd1 != -1) close(fd1);
         	
         	exit(1);
         } else if (ret < 0) 
@@ -127,26 +134,32 @@ void runInputLoop(char* buf ) {
                     dup2(pipefd[1],1);
                     close(pipefd[0]);
 
-	        	} else if(strlen(thisJob[1].infile) > 0) {
-	        		printf("Trying to open: %s\n", thisJob[1].outfile);
-	        		fd2 = getFileD(thisJob[1].infile, paths, numPaths, false);
-	        		if(fd2 == -1) {
-	        			printf("There was an error opening or creating the in file.\n");
-	        		}
-	        	}
-
-	        	if(strlen(thisJob[1].outfile) > 0) {
+	        	} else if(strlen(thisJob[1].outfile) > 0) {
 	        		printf("Trying to open outfile: %s\n", thisJob[1].outfile);
 	        		fd1 = getFileD(thisJob[1].outfile, paths, numPaths, true);
 	        		if(fd1 == -1)
 	        		{
 	        			printf("There was an error opening or creating the out file.\n");
-	        		}	
+	        		} else {
+	        			dup2(fd1,1);
+	        		}
 	        	}
 
-                printf("Parent WRITER calling exec: %s\n", thisJob[1].cmd[0]); 
-                printf("Started cpid: %d Current pid: %d\n", ret, getpid());
+
+	        	if(strlen(thisJob[1].infile) > 0) {
+	        		printf("Trying to open: %s\n", thisJob[1].infile);
+	        		fd2 = getFileD(thisJob[1].infile, paths, numPaths, false);
+	        		if(fd2 == -1) {
+	        			printf("There was an error opening or creating the in file.\n");
+	        		} 
+	        	}
+
+
+
+                //printf("Parent WRITER calling exec: %s\n", thisJob[1].cmd[0]); 
+                //printf("Started cpid: %d Current pid: %d\n", ret, getpid());
                 execvpe(thisJob[1].cmd[0], thisJob[1].cmd, environ);
+                if (fd1 != -1) close(fd1);
                 printf("WRITER exec returned\n");
                 exit(2);
 
