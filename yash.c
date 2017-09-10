@@ -21,11 +21,21 @@ struct Command
 {
 	char* isRunning;
     bool isForeground;
+    bool mostRecent;
     char** cmd;
     int numCmds;
     char* outfile;
     char* infile;
+    struct Command* nextCommand;
   
+};
+
+struct Job
+{
+	char* cmd;
+	bool isbackground;
+	bool isRunning;
+	struct Job* nextJob;
 };
 
 void runInputLoop(char*);
@@ -37,14 +47,18 @@ struct Command createCommand(char*);
 void* removeExcess(char**, int);
 char** getTokenizedList(char*, char*, int*);
 int getFileD(char*, char**, int, bool);
+void printJobs(struct Command*, int);
 
 
 int main(int argc, char** args) 
 {
     char buf[MAX_BUFFER];
+    struct Command* jobs;
+    int jobsSize = 0;
+
     const char* path = getenv("PATH");
 
-    //printf("PATH :%s\n", (path!=NULL)? path : "getenv returned NULL");
+
     signal(SIGTSTP, &handleSignal);
     signal(SIGCHLD, &handleSignal);
     signal(SIGINT, &handleSignal);
@@ -54,25 +68,33 @@ int main(int argc, char** args)
 
 void runInputLoop(char* buf ) {
 
+	struct Job* jobs;
+    int jobsSize = 0;
+
     while(1)
     { 
   	    char* buf2 = malloc(sizeof(char) * MAX_BUFFER);
   	    bool haspipe = false;
   	    bool bg = false;
-  	    struct Command* jobs;
+  	    
   	    int fd1, fd2, status;
   	    int pipefd[2];
-  	    char ch[2]={0,0}, pch=128;
   	    int numPaths = 0;
+
   	    char* path = getenv("PATH");
   	    char* currpath = malloc(strlen(path));
         strcpy(currpath, path);
   	    char** paths = getTokenizedList(currpath, ":", &numPaths);
         printf("# ");
         char* env_list[] = {};
-        buf = collectInput();
 
+        buf = collectInput();
         struct Command* thisJob = parseInput(buf, buf2, &haspipe, &bg);
+        
+        if(thisJob == NULL) {
+        	printf("Bad command. Can't have pipe and background task.\n");
+        	continue;
+        }
 
         if(haspipe) {
         	if(pipe(pipefd) == -1) {
@@ -85,25 +107,21 @@ void runInputLoop(char* buf ) {
 
         if (ret == 0) 
         {
-        	// First Child, if there is a pipe, there can't be an outfile
-
         	if(haspipe) {
                 dup2(pipefd[0],0);
                 close(pipefd[1]);
 
         	} else if(strlen(thisJob[0].infile) > 0) {
-        		printf("Trying to open: %s\n", thisJob[0].infile);
         		fd2 = getFileD(thisJob[0].infile, paths, numPaths, false);
         		if(fd2 == -1) {
         			printf("There was an error opening or creating the in file.\n");
         		} else {
-
+                    dup2(fd2,0);
         		}
         	} 
 
 
         	if(strlen(thisJob[0].outfile) > 0) {
-        		printf("Trying to open outfile: %s\n", thisJob[0].outfile);
         		fd1 = getFileD(thisJob[0].outfile, paths, numPaths, true);
         		if(fd1 == -1)
         		{
@@ -115,18 +133,20 @@ void runInputLoop(char* buf ) {
 
 
         	//printf("READER calling exec: %s\n", thisJob[0].cmd[0]);
-        	//printf("Started cpid: %d Current pid: %d\n", ret, getpid());
+        	printf("Started cpid: %d Current pid: %d\n", ret, getpid());
         	execvpe(thisJob[0].cmd[0], thisJob[0].cmd, environ);
         	printf("READER exec returned\n");
         	if (fd1 != -1) close(fd1);
-        	
+        	if (fd2 != -1) close(fd2);
+
         	exit(1);
         } else if (ret < 0) 
         {
 
         } else if (haspipe) {
         	ret = fork();
-        	//printf("Parent here cpid: %d pid: %d\n", ret, getpid());
+        	printf("Parent here cpid: %d pid: %d\n", ret, getpid());
+
         	if(ret ==0) {
                 //printf("The first process command: %s pid: %d\n", thisJob[1].cmd[0], getpid());
 
@@ -135,7 +155,7 @@ void runInputLoop(char* buf ) {
                     close(pipefd[0]);
 
 	        	} else if(strlen(thisJob[1].outfile) > 0) {
-	        		printf("Trying to open outfile: %s\n", thisJob[1].outfile);
+	        		//printf("Trying to open outfile: %s\n", thisJob[1].outfile);
 	        		fd1 = getFileD(thisJob[1].outfile, paths, numPaths, true);
 	        		if(fd1 == -1)
 	        		{
@@ -147,42 +167,44 @@ void runInputLoop(char* buf ) {
 
 
 	        	if(strlen(thisJob[1].infile) > 0) {
-	        		printf("Trying to open: %s\n", thisJob[1].infile);
+	        		//printf("Trying to open: %s\n", thisJob[1].infile);
 	        		fd2 = getFileD(thisJob[1].infile, paths, numPaths, false);
 	        		if(fd2 == -1) {
 	        			printf("There was an error opening or creating the in file.\n");
-	        		} 
+	        		} else {
+	        			dup2(fd2,0);
+	        		}
 	        	}
 
-
-
-                //printf("Parent WRITER calling exec: %s\n", thisJob[1].cmd[0]); 
-                //printf("Started cpid: %d Current pid: %d\n", ret, getpid());
+                printf("Parent WRITER calling exec: %s\n", thisJob[1].cmd[0]); 
+                printf("Started cpid: %d Current pid: %d\n", ret, getpid());
                 execvpe(thisJob[1].cmd[0], thisJob[1].cmd, environ);
                 if (fd1 != -1) close(fd1);
                 printf("WRITER exec returned\n");
                 exit(2);
 
             } else {
-            	//wait(&status);
+
             	close(pipefd[1]);
-            	waitpid(ret, &status, 0);
+		        if(thisJob[1].isForeground) {
+		            //printf("This is a forground task\n");
+		            waitpid(ret, &status, 0);
+		        } else {
+		            //printf("This is a background task\n");
+		            continue;
+		        }
             	
             }
             
+        }
+        if(thisJob[0].isForeground) {
+            //printf("This is a forground task\n");
+            waitpid(0, &status, 0);
+        } else {
+            //printf("This is a background task\n");
+            continue;
         }	
-        waitpid(0, &status, 0);
-        //wait(&status);
-        //if (thisJob[0].isForeground) {
-        //	printf("Checking if foreground\n");
-        	//printf("Calling first wait pid: %d, ret: %d\n", getpid(), ret);
-        //	waitpid(ret, &status, 0);  
-        //	if(haspipe) {
-        //	    printf("Calling second wait pid: %d, ret: %d\n", getpid(), ret);
-        //	    waitpid(0, &status, 0);
-        //	}          	
-        //}
-
+        
     }
   
 }
@@ -213,13 +235,10 @@ char* collectInput()
     return buffer;
 }
 
-//void parseInput(char* buf, ssize_t bufsize) 
 struct Command* parseInput(char* buf, char* buf2, bool* haspipe, bool* bg)
 {
-	printf("You wrote: %s\n", buf);
-	//printf("\n The buffer size was: %zd\n", strlen(buf));
-	//printf(" haspipe is: %d\n", *haspipe);
-    
+	//printf("You wrote: %s\n", buf);
+   
 	int position = 0;
 	for(int i=0; i < 200; i++) {
 		if(buf[i] == '|' && !*haspipe) {
@@ -236,42 +255,46 @@ struct Command* parseInput(char* buf, char* buf2, bool* haspipe, bool* bg)
 
 	buf = trimTrailingWhitespace(buf);
 	buf2 = trimTrailingWhitespace(buf2);
-	//printf("Command 1: %s", buf);
-	//printf("end\n");
-	//printf("Command 2: %s", buf2);
-	//printf("end\n");
+
 	struct Command retCmd = createCommand(buf);
+
+	// Restrict pipe and bg
+	if(retCmd.isForeground == false && *haspipe) return NULL;
+
 	struct Command* cmdList;
 	struct Command retcmd2;
+
 	if(*haspipe) {
         cmdList = malloc(2 * sizeof(struct Command));
         cmdList[1] = retCmd;
-        retcmd2 = createCommand(buf2);    
+        retcmd2 = createCommand(buf2);
+        // Restrict pipe and bg
+	    if(retcmd2.isForeground == false && *haspipe) return NULL;    
         cmdList[0] = retcmd2;
 	} else {
         cmdList = malloc(sizeof(struct Command));
         cmdList[0] = retCmd;
 	}	
+
 	return cmdList;   	
 }
 
 void handleSignal(int signal) {
     const char* signal_name;
     sigset_t pending;
-    printf("This signal: %d\n", signal);
 
     switch(signal) {
   	    case SIGINT:
   	        signal_name = "SIGINT";
-  	        printf("signal is: %s\n", signal_name);
+  	        //printf("signal is: %s\n", signal_name);
   	        break;
   	    case SIGTSTP:
   	        signal_name = "SIGTSTP";
-  	        printf("signal is: %s\n", signal_name);
+  	        //printf("signal is: %s\n", signal_name);
   	        break;
   	    case SIGCHLD:
   	        signal_name = "SIGCHLD";
-  	        printf("signal is: %s\n", signal_name);
+  	        //printf("signal is: %s\n", signal_name);
   	        break;
   	    default:
   	        printf("Can't find signal.\n");
@@ -281,9 +304,11 @@ void handleSignal(int signal) {
 
 char* trimTrailingWhitespace(char* buf) {
 	char *end;
+
 	end = buf + strlen(buf) - 1;
 	while(end > buf && *end == ' ') end--;
 	*(end+1) = 0;
+
 	return buf;
 }
 
@@ -291,13 +316,15 @@ void* removeExcess(char** buf, int trimNum) {
 	if (trimNum == 0) {
 		return NULL;
 	}
+
 	char** cmds = malloc(sizeof(char*) * trimNum);
 	memcpy(cmds, buf, (sizeof(char*) * trimNum));
+
 	return cmds;
 }
 
 struct Command createCommand(char* buf) {
-	printf("This starting buffer is: %s\n", buf);
+	//printf("This starting buffer is: %s\n", buf);
 	int numCmds = 1;
 	bool isFor = true;
 	char* isRunning = "Stopped";
@@ -313,7 +340,7 @@ struct Command createCommand(char* buf) {
 	char* token = strtok(buf, " ");
 	int position = 0;
 	while(token) {
-		printf("%s\n", token);
+		//printf("%s\n", token);
 		cmds[position] =token;
 		position++;
 		token = strtok(NULL, " ");
@@ -332,30 +359,25 @@ struct Command createCommand(char* buf) {
 
     // Get in and outfiles
     int lastCmd = 0;
-	printf("Num commands is now: %d\n", numCmds);
-	printf("Last command is now: %d\n", lastCmd);
+	//printf("Num commands is now: %d\n", numCmds);
+	//printf("Last command is now: %d\n", lastCmd);
 	for(int i=0; i<numCmds; i++) {
 	   if (strcmp(cmds[i], "<") == 0) {
             infile = cmds[i + 1];
-            printf("Found <\n");
+            //printf("Found <\n");
             if(lastCmd == 0) lastCmd = i;
-            printf("Numcmds: %d lastCmd: %d\n", numCmds, lastCmd);
+            //printf("Numcmds: %d lastCmd: %d\n", numCmds, lastCmd);
 		} else if (strcmp(cmds[i], ">") == 0) {
             outfile = cmds[i + 1];
-            printf("Found >\n");
+            //printf("Found >\n");
             if(lastCmd == 0) lastCmd = i;
 		} 
 	}	
 	if (lastCmd < numCmds && lastCmd != 0) numCmds = lastCmd;
 	cmds = removeExcess(cmds, numCmds);
+    
+	struct Command thisCommand = {isRunning, isFor, true, cmds, numCmds, outfile, infile};
 
-
-	struct Command thisCommand = {isRunning, isFor, cmds, numCmds, outfile, infile};
-	//printf("Command is Running: %s\n", thisCommand.isRunning);
-	//printf("Command is For: %d\n", thisCommand.isForeground);
-	//printf("Command numCmds: %d\n", thisCommand.numCmds);
-	//printf("Command outfile: %s\n", thisCommand.outfile);
-	//printf("Command infile: %s\n", thisCommand.infile);
 	return thisCommand;
 }
 
@@ -363,9 +385,9 @@ int getFileD(char* file, char** paths, int num, bool create) {
 
     int filed ;
     if (access(file, F_OK) != -1) {
-    	printf("File is in current dir.\n");
+    	//printf("File is in current dir.\n");
     	filed = open(file, O_RDWR|O_CREAT, 0777);
-    	printf("The filed is: %d\n", filed);
+    	//printf("The filed is: %d\n", filed);
     	return filed;
     }
     char* filepath;
@@ -374,26 +396,28 @@ int getFileD(char* file, char** paths, int num, bool create) {
         strcpy(filepath, paths[i]);
         strcat(filepath, "/");
         strcat(filepath, file);
-        printf("The final location is: %s\n", filepath);
     	if(access(filepath, F_OK) != -1) 
     	{
-    		printf("The file is in this dir: %s\n", filepath);
     		filed = open(filepath, O_RDWR|O_CREAT, 0777);
-    		printf("The filed is: %d\n", filed);
     	    return filed;
     	}
     }
     if(create)
     {	
-    	printf("Trying to open: %s\n", file);
         filed = open(file, O_RDWR|O_CREAT, 0777);
-        printf("No file found, created %d\n", filed);
         return filed;
     }    
 	return -1;
 
 }
 
+void printJobs(struct Command* printJobs, int numJobs) {
+    for(int i=0; i<numJobs; i++) {
+        //[1] - Running   sleep 5 &
+        //[2] - Stopped   sleep 5 &
+        //[3] + Running   log_run | grep > out.
+    }
+}
 
 char** getTokenizedList(char* breakString, char* search, int* numStrings) {
 
