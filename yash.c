@@ -39,7 +39,7 @@ struct Job
 };
 
 void runInputLoop(char*);
-struct Command* parseInput(char*, char*, bool*, bool*);
+struct Command* parseInput(char*, char*, bool*);
 char* collectInput();
 void handleSignal(int);
 char* trimTrailingWhitespace(char*);
@@ -47,13 +47,13 @@ struct Command createCommand(char*);
 void* removeExcess(char**, int);
 char** getTokenizedList(char*, char*, int*);
 int getFileD(char*, char**, int, bool);
-void printJobs(struct Command*, int);
+void printJobs(struct Job*, int);
 
 
 int main(int argc, char** args) 
 {
     char buf[MAX_BUFFER];
-    struct Command* jobs;
+    struct Job* jobs;
     int jobsSize = 0;
 
     const char* path = getenv("PATH");
@@ -74,8 +74,8 @@ void runInputLoop(char* buf ) {
     while(1)
     { 
   	    char* buf2 = malloc(sizeof(char) * MAX_BUFFER);
+  	    char* printBuf = malloc(sizeof(char) * MAX_BUFFER);
   	    bool haspipe = false;
-  	    bool bg = false;
   	    
   	    int fd1, fd2, status;
   	    int pipefd[2];
@@ -89,9 +89,22 @@ void runInputLoop(char* buf ) {
         char* env_list[] = {};
 
         buf = collectInput();
-        struct Command* thisJob = parseInput(buf, buf2, &haspipe, &bg);
-        
-        if(thisJob == NULL) {
+        strcpy(printBuf,buf);
+        struct Job thisJob = {printBuf,false,true,NULL};
+        struct Command* thisCommand = parseInput(buf, buf2, &haspipe);
+        if(!thisCommand[0].isForeground) {
+        	thisJob.isbackground = true;
+        	jobsSize++;
+        	if(jobsSize == 1) {
+        		jobs = &thisJob;
+        	} else if (jobsSize > 1) {
+        		thisJob.nextJob = jobs;
+        		jobs = &thisJob;
+        	}       	
+        }  
+        printf("jobsSize is now %d\n", jobsSize);  
+        printJobs(jobs,jobsSize);    
+        if(thisCommand == NULL) {
         	printf("Bad command. Can't have pipe and background task.\n");
         	continue;
         }
@@ -111,8 +124,8 @@ void runInputLoop(char* buf ) {
                 dup2(pipefd[0],0);
                 close(pipefd[1]);
 
-        	} else if(strlen(thisJob[0].infile) > 0) {
-        		fd2 = getFileD(thisJob[0].infile, paths, numPaths, false);
+        	} else if(strlen(thisCommand[0].infile) > 0) {
+        		fd2 = getFileD(thisCommand[0].infile, paths, numPaths, false);
         		if(fd2 == -1) {
         			printf("There was an error opening or creating the in file.\n");
         		} else {
@@ -121,8 +134,8 @@ void runInputLoop(char* buf ) {
         	} 
 
 
-        	if(strlen(thisJob[0].outfile) > 0) {
-        		fd1 = getFileD(thisJob[0].outfile, paths, numPaths, true);
+        	if(strlen(thisCommand[0].outfile) > 0) {
+        		fd1 = getFileD(thisCommand[0].outfile, paths, numPaths, true);
         		if(fd1 == -1)
         		{
         			printf("There was an error opening or creating the out file.\n");
@@ -132,9 +145,9 @@ void runInputLoop(char* buf ) {
         	}
 
 
-        	//printf("READER calling exec: %s\n", thisJob[0].cmd[0]);
+        	//printf("READER calling exec: %s\n", thisCommand[0].cmd[0]);
         	printf("Started cpid: %d Current pid: %d\n", ret, getpid());
-        	execvpe(thisJob[0].cmd[0], thisJob[0].cmd, environ);
+        	execvpe(thisCommand[0].cmd[0], thisCommand[0].cmd, environ);
         	printf("READER exec returned\n");
         	if (fd1 != -1) close(fd1);
         	if (fd2 != -1) close(fd2);
@@ -148,15 +161,15 @@ void runInputLoop(char* buf ) {
         	printf("Parent here cpid: %d pid: %d\n", ret, getpid());
 
         	if(ret ==0) {
-                //printf("The first process command: %s pid: %d\n", thisJob[1].cmd[0], getpid());
+                //printf("The first process command: %s pid: %d\n", thisCommand[1].cmd[0], getpid());
 
 	        	if(haspipe) {
                     dup2(pipefd[1],1);
                     close(pipefd[0]);
 
-	        	} else if(strlen(thisJob[1].outfile) > 0) {
-	        		//printf("Trying to open outfile: %s\n", thisJob[1].outfile);
-	        		fd1 = getFileD(thisJob[1].outfile, paths, numPaths, true);
+	        	} else if(strlen(thisCommand[1].outfile) > 0) {
+	        		//printf("Trying to open outfile: %s\n", thisCommand[1].outfile);
+	        		fd1 = getFileD(thisCommand[1].outfile, paths, numPaths, true);
 	        		if(fd1 == -1)
 	        		{
 	        			printf("There was an error opening or creating the out file.\n");
@@ -166,9 +179,9 @@ void runInputLoop(char* buf ) {
 	        	}
 
 
-	        	if(strlen(thisJob[1].infile) > 0) {
-	        		//printf("Trying to open: %s\n", thisJob[1].infile);
-	        		fd2 = getFileD(thisJob[1].infile, paths, numPaths, false);
+	        	if(strlen(thisCommand[1].infile) > 0) {
+	        		//printf("Trying to open: %s\n", thisCommand[1].infile);
+	        		fd2 = getFileD(thisCommand[1].infile, paths, numPaths, false);
 	        		if(fd2 == -1) {
 	        			printf("There was an error opening or creating the in file.\n");
 	        		} else {
@@ -176,9 +189,9 @@ void runInputLoop(char* buf ) {
 	        		}
 	        	}
 
-                printf("Parent WRITER calling exec: %s\n", thisJob[1].cmd[0]); 
+                printf("Parent WRITER calling exec: %s\n", thisCommand[1].cmd[0]); 
                 printf("Started cpid: %d Current pid: %d\n", ret, getpid());
-                execvpe(thisJob[1].cmd[0], thisJob[1].cmd, environ);
+                execvpe(thisCommand[1].cmd[0], thisCommand[1].cmd, environ);
                 if (fd1 != -1) close(fd1);
                 printf("WRITER exec returned\n");
                 exit(2);
@@ -186,7 +199,7 @@ void runInputLoop(char* buf ) {
             } else {
 
             	close(pipefd[1]);
-		        if(thisJob[1].isForeground) {
+		        if(thisCommand[1].isForeground) {
 		            //printf("This is a forground task\n");
 		            waitpid(ret, &status, 0);
 		        } else {
@@ -197,7 +210,7 @@ void runInputLoop(char* buf ) {
             }
             
         }
-        if(thisJob[0].isForeground) {
+        if(thisCommand[0].isForeground) {
             //printf("This is a forground task\n");
             waitpid(0, &status, 0);
         } else {
@@ -235,7 +248,7 @@ char* collectInput()
     return buffer;
 }
 
-struct Command* parseInput(char* buf, char* buf2, bool* haspipe, bool* bg)
+struct Command* parseInput(char* buf, char* buf2, bool* haspipe)
 {
 	//printf("You wrote: %s\n", buf);
    
@@ -411,12 +424,13 @@ int getFileD(char* file, char** paths, int num, bool create) {
 
 }
 
-void printJobs(struct Command* printJobs, int numJobs) {
-    for(int i=0; i<numJobs; i++) {
-        //[1] - Running   sleep 5 &
-        //[2] - Stopped   sleep 5 &
-        //[3] + Running   log_run | grep > out.
+void printJobs(struct Job* printJobs, int numJobs) {
+
+    //find end of list
+    if(printJobs[0].nextJob == NULL) {
+        printf("[1] %s\n", printJobs[0].cmd);
     }
+
 }
 
 char** getTokenizedList(char* breakString, char* search, int* numStrings) {
