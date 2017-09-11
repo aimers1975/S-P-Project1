@@ -43,7 +43,7 @@ struct Job
 
 void runInputLoop(char*);
 struct Command* parseInput(char*, char*, bool*);
-char* collectInput();
+char* collectInput(struct Job*);
 void handleSignal(int);
 char* trimTrailingWhitespace(char*);
 struct Command createCommand(char*);
@@ -57,6 +57,7 @@ int removeLastJob(struct Job*);
 void updateMostRecent();
 int updatePID(struct Job*, int);
 void stopJob();
+void stopAllJobs(struct Job*);
 
 int main(int argc, char** args) 
 {
@@ -80,6 +81,7 @@ void runInputLoop(char* buf ) {
 
     while(1)
     { 
+    	buf = malloc(sizeof(char) * MAX_BUFFER);
   	    char* buf2 = malloc(sizeof(char) * MAX_BUFFER);
   	    char* printBuf = NULL; 
   	    printBuf = malloc(sizeof(char) * MAX_BUFFER);
@@ -96,16 +98,30 @@ void runInputLoop(char* buf ) {
         printf("# ");
         char* env_list[] = {};
 
-        buf = collectInput();
+        buf = collectInput(jobs);
+        if(buf == NULL) {
+        	printf("There was an error with the input.\n");
+        	continue;
+        	printf("we should not get here...\n");
+        }
         strcpy(printBuf,buf);
         
         struct Command* thisCommand = parseInput(buf, buf2, &haspipe);
+
+        if(thisCommand == NULL) {
+        	printf("There was an error with the command.\n");
+        	continue;
+        }
         printf("Finding jobs buffer: %s\n", buf);
         if(strcmp(buf,"jobs") == 0) {
         	printJobs(jobs);
         	continue;
-        } else {
-        	printf("Didn't see jobs command\n");
+        } else if(strcmp(buf,"bg") == 0) {
+        	printf("Need to send sigcont to most recent stopped process!\n");
+        	continue;
+        } else if(strcmp(buf, "fg") == 0) {
+        	printf("Need to send sigcont to most recent background or stopped process, print it, and wait to complete\n");
+        	continue;
         }
         if(!thisCommand->isForeground) {
 
@@ -239,7 +255,6 @@ void runInputLoop(char* buf ) {
         } else {
             printf("This is a background task\n");
             updatePID(jobs, ret);
-        	printJobs(jobs);
             continue;
         }	
         
@@ -315,7 +330,7 @@ int removeLastJob(struct Job* jobsList) {
     return -1;
 }
 
-char* collectInput() 
+char* collectInput(struct Job* jobs) 
 {
     int position = 0;
     int bufsize = MAX_BUFFER;
@@ -330,9 +345,25 @@ char* collectInput()
     while(1) {  	
   	    c = getchar();
 
-  	    if (c == EOF || c == '\n' || position == (200-1)) {
-  		    buffer[position] = '\0';
-  		    return buffer;	
+  	    if (c == EOF)
+  	    {
+            // iterate through all jobs and kill
+            stopAllJobs(jobs);
+            kill(getpid(), SIGKILL);
+  	    } else if (c == '\n' || position == (200-1)) {
+  	    	if(c != '\n') {
+  	    		while(1) {
+  	    			c = getchar();
+  	    			if(c == '\n') {
+  	    				return NULL;
+  	    			}
+  	    		} 
+
+  	    	} else 
+  	    	{
+  		        buffer[position] = '\0';
+  		        return buffer;
+  		    }    	
      	} else {
   	    	buffer[position] = c;
   		    position++;
@@ -347,15 +378,18 @@ struct Command* parseInput(char* buf, char* buf2, bool* haspipe)
 	int position = 0;
 	for(int i=0; i < 200; i++) {
 		if(buf[i] == '|' && !*haspipe) {
+
 			buf[i] = '\0';
 			*haspipe = true;
 			i++;
 			buf[i] = '\0';
+		} else if(buf[i] == '|' && *haspipe) {
+			return NULL;
 		} else if (*haspipe) {
 			buf2[position] = buf[i];
 			position++;
 			buf[i] = '\0';
-		} 
+		}
 	}
 
 	buf = trimTrailingWhitespace(buf);
@@ -365,6 +399,7 @@ struct Command* parseInput(char* buf, char* buf2, bool* haspipe)
 
 	// Restrict pipe and bg
 	if(retCmd.isForeground == false && *haspipe) return NULL;
+	if(retCmd.cmd == NULL)  return NULL;
 
 	struct Command* cmdList;
 	struct Command retcmd2;
@@ -391,15 +426,17 @@ void handleSignal(int signal) {
     switch(signal) {
   	    case SIGINT:
   	        signal_name = "SIGINT";
-  	        //printf("signal is: %s\n", signal_name);
+  	        printf("signal is: %s\n# ", signal_name);
+  	        fflush(stdout);
   	        break;
   	    case SIGTSTP:
   	        signal_name = "SIGTSTP";
-  	        //printf("signal is: %s\n", signal_name);
+  	        printf("signal is: %s\n# ", signal_name);
+  	        fflush(stdout);
   	        break;
   	    case SIGCHLD:
   	        signal_name = "SIGCHLD";
-  	        //printf("signal is: %s\n", signal_name);
+  	        printf("signal is: %s\n", signal_name);
   	        break;
   	    default:
   	        printf("Can't find signal.\n");
@@ -454,12 +491,17 @@ struct Command createCommand(char* buf) {
     // Figure if this command will be a background process
 	char* infile = "";
 	char* outfile = "";
+	printf("Starting numCmds: %d\n", numCmds);
 	for(int i=0; i < numCmds; i++) {
 		if((strcmp(cmds[i],"&") == 0) && isFor) {
             isFor = false;
             numCmds--;
+            if(i<numCmds) {
+            	struct Command thisCommand = {false, -1, false, true, NULL, -1, NULL, NULL};
+            	return thisCommand;
+            }
             break;
-        }
+        } 
     }   
 
     // Get in and outfiles
@@ -547,6 +589,21 @@ void printJobs(struct Job* jobsList) {
     	    if(current->isRunning) printf(" Running ");
     	    printf(" %s", current->cmd);
     	    printf(" PID: %d\n", current->pid);
+    	} 
+    	current = current->nextJob;   
+    }
+    printf("Jobslist now empty\n");
+
+}
+
+void stopAllJobs(struct Job* jobsList) {
+
+    struct Job* current = jobsList;
+    while(current != NULL) {
+    	if(current->cmd != NULL)
+    	{
+    		printf("Killing pid: %d\n", current->pid);
+            kill(current->pid, SIGKILL);
     	} 
     	current = current->nextJob;   
     }
