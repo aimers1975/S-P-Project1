@@ -20,6 +20,7 @@ typedef int bool;
 struct Command 
 {
 	char* isRunning;
+	int pid;
     bool isForeground;
     bool mostRecent;
     char** cmd;
@@ -33,6 +34,8 @@ struct Command
 struct Job
 {
 	char* cmd;
+	int id;
+	int pid;
 	bool isMostRecent;
 	bool isRunning;
 	struct Job* nextJob;
@@ -48,7 +51,7 @@ void* removeExcess(char**, int);
 char** getTokenizedList(char*, char*, int*);
 int getFileD(char*, char**, int, bool);
 void printJobs(struct Job*, int);
-void pushJob(struct Job* head, char*, bool, bool, int);
+void pushJob(struct Job* head, char*, bool, bool, int, int);
 
 int main(int argc, char** args) 
 {
@@ -67,7 +70,7 @@ int main(int argc, char** args)
 void runInputLoop(char* buf ) {
 
 	struct Job* jobs = malloc(sizeof(struct Job));
-    int jobsSize = 0;
+    int jobsSize = 1;
 
     while(1)
     { 
@@ -92,8 +95,9 @@ void runInputLoop(char* buf ) {
         
         struct Command* thisCommand = parseInput(buf, buf2, &haspipe);
         if(!thisCommand->isForeground) {
+
+        	pushJob(jobs,printBuf,true,true,jobsSize,-1);
         	jobsSize++;
-        	pushJob(jobs,printBuf,true,true,jobsSize);
         	if(jobs == NULL) {
         		printf("jobs is null again");
         	} else {
@@ -220,7 +224,7 @@ void runInputLoop(char* buf ) {
   
 }
 
-void pushJob(struct Job* head, char* thisCmd, bool isRun, bool isRecent, int size)
+void pushJob(struct Job* head, char* thisCmd, bool isRun, bool isRecent, int size, int pid)
 {
 	//pushJob(jobs,printBuf,true,jobsSize);;
     struct Job* current = head;
@@ -234,17 +238,21 @@ void pushJob(struct Job* head, char* thisCmd, bool isRun, bool isRecent, int siz
 
 	    current->nextJob = malloc(sizeof(struct Job));
 	    current->nextJob->cmd = thisCmd;
+	    current->nextJob->id = size;
+	    current->nextJob->pid = -1;
 	    current->nextJob->isRunning = isRun;
 	    current->nextJob->isMostRecent = isRecent;
 	    current->nextJob->nextJob =NULL;
 	} else {
 		printf("Push job head equals null\n");
-		current = malloc(sizeof(struct Job));
 		if(current == NULL) {
 			printf("head is still null\n");
 		} else {
 			printf("head is no longer null\n");
 			current->nextJob = NULL;
+		    current->cmd = thisCmd;
+	        current->id = size;
+	        current->pid = -1;
 	        current->isRunning = isRun;
 	        current->isMostRecent = isRecent;
 		}
@@ -423,7 +431,7 @@ struct Command createCommand(char* buf) {
 	if (lastCmd < numCmds && lastCmd != 0) numCmds = lastCmd;
 	cmds = removeExcess(cmds, numCmds);
     
-	struct Command thisCommand = {isRunning, isFor, true, cmds, numCmds, outfile, infile};
+	struct Command thisCommand = {isRunning, -1, isFor, true, cmds, numCmds, outfile, infile};
 
 	return thisCommand;
 }
@@ -462,7 +470,8 @@ void printJobs(struct Job* jobsList, int numJobs) {
 
     struct Job* current = jobsList;
     while(current != NULL) {
-    	printf("The current is: %s\n", current->cmd);
+    	printf("[%d]", current->id);
+    	printf(" %s\n", current->cmd);
     	current = current->nextJob;
     }
 
