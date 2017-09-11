@@ -50,14 +50,20 @@ struct Command createCommand(char*);
 void* removeExcess(char**, int);
 char** getTokenizedList(char*, char*, int*);
 int getFileD(char*, char**, int, bool);
-void printJobs(struct Job*, int);
-void pushJob(struct Job* head, char*, bool, bool, int, int);
+void printJobs(struct Job*);
+void pushJob(struct Job*, char*, bool, bool, int, int);
+int removeJob(struct Job*, int);
+int removeLastJob(struct Job*);
+void updateMostRecent();
+int updatePID(struct Job*, int);
+void stopJob();
 
 int main(int argc, char** args) 
 {
     char buf[MAX_BUFFER];
 
     const char* path = getenv("PATH");
+    struct Job* jobs = malloc(sizeof(struct Job));
 
 
     signal(SIGTSTP, &handleSignal);
@@ -94,9 +100,16 @@ void runInputLoop(char* buf ) {
         strcpy(printBuf,buf);
         
         struct Command* thisCommand = parseInput(buf, buf2, &haspipe);
+        printf("Finding jobs buffer: %s\n", buf);
+        if(strcmp(buf,"jobs") == 0) {
+        	printJobs(jobs);
+        	continue;
+        } else {
+        	printf("Didn't see jobs command\n");
+        }
         if(!thisCommand->isForeground) {
 
-        	pushJob(jobs,printBuf,true,true,jobsSize,-1);
+        	pushJob(jobs,printBuf,true,true,jobsSize,jobsSize);
         	jobsSize++;
         	if(jobs == NULL) {
         		printf("jobs is null again");
@@ -105,7 +118,8 @@ void runInputLoop(char* buf ) {
         	}
         }  
         printf("jobsSize is now %d\n", jobsSize);  
-        printJobs(jobs,jobsSize);    
+   
+ 
         if(thisCommand == NULL) {
         	printf("Bad command. Can't have pipe and background task.\n");
         	continue;
@@ -122,6 +136,7 @@ void runInputLoop(char* buf ) {
 
         if (ret == 0) 
         {
+        	printf(" READER Started cpid: %d Current pid: %d\n", ret, getpid());
         	if(haspipe) {
                 dup2(pipefd[0],0);
                 close(pipefd[1]);
@@ -129,7 +144,9 @@ void runInputLoop(char* buf ) {
         	} else if(strlen(thisCommand[0].infile) > 0) {
         		fd2 = getFileD(thisCommand[0].infile, paths, numPaths, false);
         		if(fd2 == -1) {
-        			printf("There was an error opening or creating the in file.\n");
+        			printf("There was an error opening the input file.\n");
+        			// TODO: make sure jobis not in jobs list
+        			continue;
         		} else {
                     dup2(fd2,0);
         		}
@@ -148,29 +165,29 @@ void runInputLoop(char* buf ) {
 
 
         	//printf("READER calling exec: %s\n", thisCommand[0].cmd[0]);
-        	printf("Started cpid: %d Current pid: %d\n", ret, getpid());
+        	
+
         	execvpe(thisCommand[0].cmd[0], thisCommand[0].cmd, environ);
-        	printf("READER exec returned\n");
+            //TODO: do we ever execut here?
         	if (fd1 != -1) close(fd1);
         	if (fd2 != -1) close(fd2);
-
         	exit(1);
         } else if (ret < 0) 
         {
 
         } else if (haspipe) {
+        	printf("Parent here cpid: %d pid: %d\n", ret, getpid());
         	ret = fork();
         	printf("Parent here cpid: %d pid: %d\n", ret, getpid());
 
         	if(ret ==0) {
-                //printf("The first process command: %s pid: %d\n", thisCommand[1].cmd[0], getpid());
 
 	        	if(haspipe) {
                     dup2(pipefd[1],1);
                     close(pipefd[0]);
 
 	        	} else if(strlen(thisCommand[1].outfile) > 0) {
-	        		//printf("Trying to open outfile: %s\n", thisCommand[1].outfile);
+
 	        		fd1 = getFileD(thisCommand[1].outfile, paths, numPaths, true);
 	        		if(fd1 == -1)
 	        		{
@@ -182,18 +199,21 @@ void runInputLoop(char* buf ) {
 
 
 	        	if(strlen(thisCommand[1].infile) > 0) {
-	        		//printf("Trying to open: %s\n", thisCommand[1].infile);
+
 	        		fd2 = getFileD(thisCommand[1].infile, paths, numPaths, false);
 	        		if(fd2 == -1) {
-	        			printf("There was an error opening or creating the in file.\n");
+	        			printf("There was an error opening the input file.\n");
+	        			// TODO: make sure jobis not in jobs list
+	        			continue;
 	        		} else {
 	        			dup2(fd2,0);
 	        		}
 	        	}
 
-                printf("Parent WRITER calling exec: %s\n", thisCommand[1].cmd[0]); 
-                printf("Started cpid: %d Current pid: %d\n", ret, getpid());
+                //TODO: do we ever see this printf? 
+                printf("WRITER Started cpid: %d Current pid: %d\n", ret, getpid());
                 execvpe(thisCommand[1].cmd[0], thisCommand[1].cmd, environ);
+
                 if (fd1 != -1) close(fd1);
                 printf("WRITER exec returned\n");
                 exit(2);
@@ -202,10 +222,11 @@ void runInputLoop(char* buf ) {
 
             	close(pipefd[1]);
 		        if(thisCommand[1].isForeground) {
-		            //printf("This is a forground task\n");
+		        	//TODO: does this do anything?
+		            printf("This is a forground task\n");
 		            waitpid(ret, &status, 0);
 		        } else {
-		            //printf("This is a background task\n");
+		            printf("This is a background task\n");
 		            continue;
 		        }
             	
@@ -213,10 +234,12 @@ void runInputLoop(char* buf ) {
             
         }
         if(thisCommand[0].isForeground) {
-            //printf("This is a forground task\n");
+            printf("This is a forground task\n");
             waitpid(0, &status, 0);
         } else {
-            //printf("This is a background task\n");
+            printf("This is a background task\n");
+            updatePID(jobs, ret);
+        	printJobs(jobs);
             continue;
         }	
         
@@ -226,24 +249,23 @@ void runInputLoop(char* buf ) {
 
 void pushJob(struct Job* head, char* thisCmd, bool isRun, bool isRecent, int size, int pid)
 {
-	//pushJob(jobs,printBuf,true,jobsSize);;
+
     struct Job* current = head;
 
 	if(current != NULL) {
-		printf("Push job head/current is not null\n");
         while(current->nextJob != NULL) {
-        	printf("current -> nextJob != NULL\n");
 		    current = current->nextJob;
 	    }
 
 	    current->nextJob = malloc(sizeof(struct Job));
 	    current->nextJob->cmd = thisCmd;
 	    current->nextJob->id = size;
-	    current->nextJob->pid = -1;
+	    current->nextJob->pid = pid;
 	    current->nextJob->isRunning = isRun;
 	    current->nextJob->isMostRecent = isRecent;
 	    current->nextJob->nextJob =NULL;
 	} else {
+		//TODO: Do we get here?
 		printf("Push job head equals null\n");
 		if(current == NULL) {
 			printf("head is still null\n");
@@ -252,16 +274,45 @@ void pushJob(struct Job* head, char* thisCmd, bool isRun, bool isRecent, int siz
 			current->nextJob = NULL;
 		    current->cmd = thisCmd;
 	        current->id = size;
-	        current->pid = -1;
+	        current->pid = pid;
 	        current->isRunning = isRun;
 	        current->isMostRecent = isRecent;
 		}
 	}
-	if(head == NULL) {
-		printf("Last check of head is NULL\n");
-	} else {
-		printf("Last check of head is not NULL\n");
-	}
+}
+
+int removeJob(struct Job* jobsList, int pid) {
+	struct Job* current = jobsList;
+	struct Job* previous = NULL;
+    while(current != NULL) {
+    	if(current->pid == pid)
+    	{
+    		printf("Trying to remove job\n");
+    		previous->nextJob = current->nextJob;
+    		free(current);
+    		return pid;
+    	}
+    	previous=current; 
+    	current = current->nextJob;   
+    }
+    return -1;
+
+}
+
+int removeLastJob(struct Job* jobsList) {
+	struct Job* current = jobsList;
+	struct Job* previous = NULL;
+    while(current != NULL) {
+    	previous=current;
+    	if(current->nextJob == NULL) {
+    		int pid = current->pid;
+    		free(current);
+    		previous->nextJob = NULL;
+    		return pid;
+    	} 
+    	current = current->nextJob; 
+    }
+    return -1;
 }
 
 char* collectInput() 
@@ -292,7 +343,6 @@ char* collectInput()
 
 struct Command* parseInput(char* buf, char* buf2, bool* haspipe)
 {
-	//printf("You wrote: %s\n", buf);
    
 	int position = 0;
 	for(int i=0; i < 200; i++) {
@@ -466,14 +516,41 @@ int getFileD(char* file, char** paths, int num, bool create) {
 
 }
 
-void printJobs(struct Job* jobsList, int numJobs) {
+int updatePID(struct Job* jobsList, int pid) {
+	struct Job* current = jobsList;
+	struct Job* previous = NULL;
+    while(current != NULL) {
+    	previous=current;
+    	if(current->nextJob == NULL) {
+    		current->pid = pid;
+    		return pid;
+    	} 
+    	current = current->nextJob; 
+    }
+    return -1;	
+}
+
+void printJobs(struct Job* jobsList) {
+		    //[1] - Running   sleep 5 &
+        //[2] - Stopped   sleep 5 &
+        //[3] + Running   log_run | grep > out.txt
 
     struct Job* current = jobsList;
     while(current != NULL) {
-    	printf("[%d]", current->id);
-    	printf(" %s\n", current->cmd);
-    	current = current->nextJob;
+    	if(current->cmd != NULL)
+    	{
+    	    printf("[%d]", current->id);
+    	    if(current->isMostRecent) 
+    	    	printf(" +");
+    	    else
+    	    	printf(" -");
+    	    if(current->isRunning) printf(" Running ");
+    	    printf(" %s", current->cmd);
+    	    printf(" PID: %d\n", current->pid);
+    	} 
+    	current = current->nextJob;   
     }
+    printf("Jobslist now empty\n");
 
 }
 
