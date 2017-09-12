@@ -59,12 +59,17 @@ int updatePID(struct Job*, int);
 void stopJob();
 void stopAllJobs(struct Job*);
 
+pid_t currentChildPID=-1;
+char* currentCmd = NULL;
+int jobsSize = 1;
+struct Job* jobs;
+
 int main(int argc, char** args) 
 {
     char buf[MAX_BUFFER];
 
     const char* path = getenv("PATH");
-    struct Job* jobs = malloc(sizeof(struct Job));
+    jobs = malloc(sizeof(struct Job));
 
 
     signal(SIGTSTP, &handleSignal);
@@ -76,8 +81,11 @@ int main(int argc, char** args)
 
 void runInputLoop(char* buf ) {
 
-	struct Job* jobs = malloc(sizeof(struct Job));
-    int jobsSize = 1;
+	//struct Job* jobs = malloc(sizeof(struct Job));
+
+	fflush(stdin);
+	fflush(stdout);
+
 
     while(1)
     { 
@@ -95,6 +103,7 @@ void runInputLoop(char* buf ) {
   	    char* currpath = malloc(strlen(path));
         strcpy(currpath, path);
   	    char** paths = getTokenizedList(currpath, ":", &numPaths);
+  	    fflush(stdin);
         printf("# ");
         char* env_list[] = {};
 
@@ -102,7 +111,6 @@ void runInputLoop(char* buf ) {
         if(buf == NULL) {
         	printf("There was an error with the input.\n");
         	continue;
-        	printf("we should not get here...\n");
         }
         strcpy(printBuf,buf);
         
@@ -112,7 +120,6 @@ void runInputLoop(char* buf ) {
         	printf("There was an error with the command.\n");
         	continue;
         }
-        printf("Finding jobs buffer: %s\n", buf);
         if(strcmp(buf,"jobs") == 0) {
         	printJobs(jobs);
         	continue;
@@ -124,17 +131,11 @@ void runInputLoop(char* buf ) {
         	continue;
         }
         if(!thisCommand->isForeground) {
-
         	pushJob(jobs,printBuf,true,true,jobsSize,jobsSize);
         	jobsSize++;
-        	if(jobs == NULL) {
-        		printf("jobs is null again");
-        	} else {
-        		printf("jobs is still not null -whew");
-        	}
-        }  
-        printf("jobsSize is now %d\n", jobsSize);  
-   
+        } else {
+        	currentCmd = printBuf;
+        }    
  
         if(thisCommand == NULL) {
         	printf("Bad command. Can't have pipe and background task.\n");
@@ -149,10 +150,12 @@ void runInputLoop(char* buf ) {
         }
 
         pid_t ret = fork();
+        currentChildPID = ret;
+        //printf("CurrentCHILDPID: %d\n", currentChildPID);
 
         if (ret == 0) 
         {
-        	printf(" READER Started cpid: %d Current pid: %d\n", ret, getpid());
+        	//printf(" READER Started cpid: %d Current pid: %d\n", ret, getpid());
         	if(haspipe) {
                 dup2(pipefd[0],0);
                 close(pipefd[1]);
@@ -194,7 +197,6 @@ void runInputLoop(char* buf ) {
         } else if (haspipe) {
         	printf("Parent here cpid: %d pid: %d\n", ret, getpid());
         	ret = fork();
-        	printf("Parent here cpid: %d pid: %d\n", ret, getpid());
 
         	if(ret ==0) {
 
@@ -227,11 +229,10 @@ void runInputLoop(char* buf ) {
 	        	}
 
                 //TODO: do we ever see this printf? 
-                printf("WRITER Started cpid: %d Current pid: %d\n", ret, getpid());
+                //printf("WRITER Started cpid: %d Current pid: %d\n", ret, getpid());
                 execvpe(thisCommand[1].cmd[0], thisCommand[1].cmd, environ);
 
                 if (fd1 != -1) close(fd1);
-                printf("WRITER exec returned\n");
                 exit(2);
 
             } else {
@@ -239,10 +240,11 @@ void runInputLoop(char* buf ) {
             	close(pipefd[1]);
 		        if(thisCommand[1].isForeground) {
 		        	//TODO: does this do anything?
-		            printf("This is a forground task\n");
+		            //printf("This is a forground task\n");
+		            //printf("Waiting on PID: %d\n", ret);
 		            waitpid(ret, &status, 0);
 		        } else {
-		            printf("This is a background task\n");
+		            //printf("This is a background task\n");
 		            continue;
 		        }
             	
@@ -250,10 +252,19 @@ void runInputLoop(char* buf ) {
             
         }
         if(thisCommand[0].isForeground) {
-            printf("This is a forground task\n");
-            waitpid(0, &status, 0);
+            //printf("This is a forground task\n");
+            //printf("Waiting on PID: 0\n");
+            //waitpid(0, &status, 0);
+            waitpid(ret, &status, WUNTRACED);
+            while(!WIFSTOPPED(status) && !WIFEXITED(status)) {
+            	waitpid(ret, &status, WUNTRACED);
+            }
+            printf("The exit status was: %d\n", WEXITSTATUS(status));
+            printf("The term signal was %d\n", WIFSIGNALED(status));
+            printf("The stop signal was %d\n", WSTOPSIG(status));
+
         } else {
-            printf("This is a background task\n");
+            //printf("This is a background task\n");
             updatePID(jobs, ret);
             continue;
         }	
@@ -281,9 +292,8 @@ void pushJob(struct Job* head, char* thisCmd, bool isRun, bool isRecent, int siz
 	    current->nextJob->nextJob =NULL;
 	} else {
 		//TODO: Do we get here?
-		printf("Push job head equals null\n");
 		if(current == NULL) {
-			printf("head is still null\n");
+			printf("head is null\n");
 		} else {
 			printf("head is no longer null\n");
 			current->nextJob = NULL;
@@ -426,17 +436,18 @@ void handleSignal(int signal) {
     switch(signal) {
   	    case SIGINT:
   	        signal_name = "SIGINT";
-  	        printf("signal is: %s\n# ", signal_name);
+  	        printf("signal is: %s\n%d", signal_name, getpid());
+  	        fflush(stdin);
   	        fflush(stdout);
   	        break;
   	    case SIGTSTP:
-  	        signal_name = "SIGTSTP";
-  	        printf("signal is: %s\n# ", signal_name);
-  	        fflush(stdout);
+  	        pushJob(jobs, currentCmd, false,true,jobsSize,currentChildPID);
+  	        printf("This signal was: %d\n", SIGTSTP);
+  	        kill(currentChildPID, SIGSTOP);
   	        break;
   	    case SIGCHLD:
   	        signal_name = "SIGCHLD";
-  	        printf("signal is: %s\n", signal_name);
+  	        //printf("signal is: %s\n", signal_name);
   	        break;
   	    default:
   	        printf("Can't find signal.\n");
@@ -491,7 +502,6 @@ struct Command createCommand(char* buf) {
     // Figure if this command will be a background process
 	char* infile = "";
 	char* outfile = "";
-	printf("Starting numCmds: %d\n", numCmds);
 	for(int i=0; i < numCmds; i++) {
 		if((strcmp(cmds[i],"&") == 0) && isFor) {
             isFor = false;
@@ -573,7 +583,7 @@ int updatePID(struct Job* jobsList, int pid) {
 }
 
 void printJobs(struct Job* jobsList) {
-		    //[1] - Running   sleep 5 &
+		//[1] - Running   sleep 5 &
         //[2] - Stopped   sleep 5 &
         //[3] + Running   log_run | grep > out.txt
 
@@ -607,8 +617,6 @@ void stopAllJobs(struct Job* jobsList) {
     	} 
     	current = current->nextJob;   
     }
-    printf("Jobslist now empty\n");
-
 }
 
 char** getTokenizedList(char* breakString, char* search, int* numStrings) {
