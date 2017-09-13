@@ -132,10 +132,7 @@ void runInputLoop(char* buf ) {
             while(checkpid != ret2 && (!WIFSTOPPED(status) && !WIFEXITED(status))) {
             	checkpid = waitpid(ret2, &status, WUNTRACED);
             }
-            printf("WIFSTOPPED: %d\n", WIFSTOPPED(status));
-            printf("WIFEXITED: %d\n", WIFEXITED(status));
             currentJobId = -1;
-        	printf("Need to send sigcont to most recent background or stopped process, print it, and wait to complete\n");
         	continue;
         }
 
@@ -153,11 +150,11 @@ void runInputLoop(char* buf ) {
         	}
         }
 
-        pid_t ret = fork();
-        currentChildPID = ret;
+        pid_t ret3 = fork();
+        currentChildPID = ret3;
         //printf("CurrentCHILDPID: %d\n", currentChildPID);
 
-        if (ret == 0) 
+        if (ret3 == 0) 
         {
         	//printf(" READER Started cpid: %d Current pid: %d\n", ret, getpid());
         	if(haspipe) {
@@ -192,19 +189,21 @@ void runInputLoop(char* buf ) {
 
         	execvpe(thisCommand[0].cmd[0], thisCommand[0].cmd, environ);
             //TODO: do we ever execut here?
+            printf("ERROR!");
         	if (fd1 != -1) close(fd1);
         	if (fd2 != -1) close(fd2);
         	exit(1);
-        } else if (ret < 0) 
+        } else if (ret3 < 0) 
         {
 
         } else if (haspipe) {
-        	printf("Parent here cpid: %d pid: %d\n", ret, getpid());
-        	ret = fork();
+        	//printf("Parent here cpid: %d pid: %d\n", ret, getpid());
+        	pid_t ret = fork();
 
         	if(ret ==0) {
 
 	        	if(haspipe) {
+	        		//printf("Got in has pipe\n");
                     dup2(pipefd[1],1);
                     close(pipefd[0]);
 
@@ -229,13 +228,14 @@ void runInputLoop(char* buf ) {
 	        			continue;
 	        		} else {
 	        			dup2(fd2,0);
+	        			printf("opened the file\n");
 	        		}
 	        	}
 
                 //TODO: do we ever see this printf? 
                 //printf("WRITER Started cpid: %d Current pid: %d\n", ret, getpid());
                 execvpe(thisCommand[1].cmd[0], thisCommand[1].cmd, environ);
-
+                printf("ERROR\n");
                 if (fd1 != -1) close(fd1);
                 exit(2);
 
@@ -250,8 +250,6 @@ void runInputLoop(char* buf ) {
                     while(checkpid != ret && (!WIFSTOPPED(status) && !WIFEXITED(status))) {
             	        checkpid = waitpid(ret, &status, WUNTRACED);
 		            }
-		            printf("WIFSTOPPED: %d\n", WIFSTOPPED(status));
-		            printf("WIFEXITED: %d\n", WIFEXITED(status));
 		        } else {
 		            //printf("This is a background task\n");
 		            continue;
@@ -264,17 +262,15 @@ void runInputLoop(char* buf ) {
             //printf("This is a forground task\n");
             //printf("Waiting on PID: 0\n");
             //waitpid(0, &status, 0);
-            int checkpid = waitpid(ret, &status, WUNTRACED);
-            while(checkpid != ret && (!WIFSTOPPED(status) && !WIFEXITED(status))) {
-            	checkpid = waitpid(ret, &status, WUNTRACED);
+            int checkpid2 = waitpid(ret3, &status, WUNTRACED);
+            while(checkpid2 != ret3 && (!WIFSTOPPED(status) && !WIFEXITED(status))) {
+            	checkpid2 = waitpid(ret3, &status, WUNTRACED);
             }
-            printf("WIFSTOPPED: %d\n", WIFSTOPPED(status));
-            printf("WIFEXITED: %d\n", WIFEXITED(status));
             currentJobId = -1;
 
         } else {
             //printf("This is a background task\n");
-            updatePID(jobs, ret);
+            updatePID(jobs, ret3);
             continue;
         }	
         
