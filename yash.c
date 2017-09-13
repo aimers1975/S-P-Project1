@@ -128,10 +128,12 @@ void runInputLoop(char* buf ) {
         	continue;
         } else if(strcmp(buf, "fg") == 0) {
         	pid_t ret2 = foreground();
-            waitpid(ret2, &status, WUNTRACED);
-            while(!WIFSTOPPED(status) && !WIFEXITED(status)) {
-            	waitpid(ret2, &status, WUNTRACED);
+            int checkpid = waitpid(ret2, &status, WUNTRACED);
+            while(checkpid != ret2 && (!WIFSTOPPED(status) && !WIFEXITED(status))) {
+            	checkpid = waitpid(ret2, &status, WUNTRACED);
             }
+            printf("WIFSTOPPED: %d\n", WIFSTOPPED(status));
+            printf("WIFEXITED: %d\n", WIFEXITED(status));
             currentJobId = -1;
         	printf("Need to send sigcont to most recent background or stopped process, print it, and wait to complete\n");
         	continue;
@@ -244,7 +246,12 @@ void runInputLoop(char* buf ) {
 		        	//TODO: does this do anything?
 		            //printf("This is a forground task\n");
 		            //printf("Waiting on PID: %d\n", ret);
-		            waitpid(ret, &status, 0);
+                    int checkpid = waitpid(ret, &status, WUNTRACED);
+                    while(checkpid != ret && (!WIFSTOPPED(status) && !WIFEXITED(status))) {
+            	        checkpid = waitpid(ret, &status, WUNTRACED);
+		            }
+		            printf("WIFSTOPPED: %d\n", WIFSTOPPED(status));
+		            printf("WIFEXITED: %d\n", WIFEXITED(status));
 		        } else {
 		            //printf("This is a background task\n");
 		            continue;
@@ -257,10 +264,12 @@ void runInputLoop(char* buf ) {
             //printf("This is a forground task\n");
             //printf("Waiting on PID: 0\n");
             //waitpid(0, &status, 0);
-            waitpid(ret, &status, WUNTRACED);
-            while(!WIFSTOPPED(status) && !WIFEXITED(status)) {
-            	waitpid(ret, &status, WUNTRACED);
+            int checkpid = waitpid(ret, &status, WUNTRACED);
+            while(checkpid != ret && (!WIFSTOPPED(status) && !WIFEXITED(status))) {
+            	checkpid = waitpid(ret, &status, WUNTRACED);
             }
+            printf("WIFSTOPPED: %d\n", WIFSTOPPED(status));
+            printf("WIFEXITED: %d\n", WIFEXITED(status));
             currentJobId = -1;
 
         } else {
