@@ -58,6 +58,7 @@ int updatePID(struct Job*, int);
 void stopAllJobs(struct Job*);
 int foreground();
 int background();
+bool resetMostRecent(struct Job*);
 
 pid_t currentChildPID=-1;
 char* currentCmd = NULL;
@@ -320,7 +321,8 @@ int removeJob(struct Job* jobsList, int pid) {
     	{
     		previous->nextJob = current->nextJob;
     		currentJobId = current->id;
-    		free(current);
+            free(current);
+            resetMostRecent(jobsList);
     		return pid;
     	}
     	previous=current; 
@@ -328,6 +330,25 @@ int removeJob(struct Job* jobsList, int pid) {
     }
     return -1;
 
+}
+
+bool resetMostRecent(struct Job* jobsList) {
+	struct Job* current = jobsList;
+	struct Job* previous = NULL;
+    while(current != NULL) {
+    	if(current->isMostRecent == true)
+    	{
+            return true;
+    	}
+    	previous=current; 
+    	current = current->nextJob;   
+    }
+    if(previous != NULL) {
+        previous->isMostRecent = true;
+        return true;
+    } else {
+    	return false;
+    }
 }
 
 int removeLastJob(struct Job* jobsList) {
