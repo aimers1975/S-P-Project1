@@ -205,11 +205,15 @@ void runInputLoop(char* buf ) {
 
 
         	//printf("READER calling exec: %s\n", thisCommand[0].cmd[0]);
-        	
-
-        	execvpe(thisCommand[0].cmd[0], thisCommand[0].cmd, environ);
+        	char* cmdArray[thisCommand[0].numCmds+1];
+        	for (int i=0; i<thisCommand[0].numCmds; i++) {
+        		printf("Sending cmd %s\n", thisCommand[0].cmd[i]);
+        		cmdArray[i] = thisCommand[0].cmd[i];
+        	}
+            cmdArray[thisCommand[0].numCmds] = NULL;
+        	execvpe(thisCommand[0].cmd[0], cmdArray, environ);
             //TODO: do we ever execut here?
-            printf("ERROR!");
+            perror("There was an error with the command\n!");
         	if (fd1 != -1) close(fd1);
         	if (fd2 != -1) close(fd2);
         	exit(1);
@@ -255,7 +259,7 @@ void runInputLoop(char* buf ) {
                 //TODO: do we ever see this printf? 
                 //printf("WRITER Started cpid: %d Current pid: %d\n", ret, getpid());
                 execvpe(thisCommand[1].cmd[0], thisCommand[1].cmd, environ);
-                printf("ERROR\n");
+                perror("There was an error with the command!\n");
                 if (fd1 != -1) close(fd1);
                 exit(2);
 
@@ -446,6 +450,7 @@ struct Command* parseInput(char* buf, char* buf2, bool* haspipe)
 	buf2 = trimTrailingWhitespace(buf2);
 
 	struct Command retCmd = createCommand(buf);
+
 	// Restrict pipe and bg
 	if(retCmd.isForeground == false && *haspipe) return NULL;
 	if(retCmd.cmd == NULL)  return NULL;
@@ -458,8 +463,7 @@ struct Command* parseInput(char* buf, char* buf2, bool* haspipe)
         cmdList[1] = retCmd;
         retcmd2 = createCommand(buf2);
         // Restrict pipe and bg
-	    if(retcmd2.isForeground == false && *haspipe) return NULL;
-	    if((strlen(retCmd.outfile) > 0) && *haspipe) return NULL;
+	    if(retcmd2.isForeground == false && *haspipe) return NULL;    
         cmdList[0] = retcmd2;
 	} else {
         cmdList = malloc(sizeof(struct Command));
@@ -524,7 +528,7 @@ void* removeExcess(char** buf, int trimNum) {
 }
 
 struct Command createCommand(char* buf) {
-	//printf("This starting buffer is: %s\n", buf);
+	printf("This starting buffer is: %s\n", buf);
 	int numCmds = 1;
 	bool isFor = true;
 	char* isRunning = "Stopped";
@@ -540,7 +544,7 @@ struct Command createCommand(char* buf) {
 	char* token = strtok(buf, " ");
 	int position = 0;
 	while(token) {
-		//printf("%s\n", token);
+		printf("%s\n", token);
 		cmds[position] =token;
 		position++;
 		token = strtok(NULL, " ");
@@ -574,9 +578,13 @@ struct Command createCommand(char* buf) {
             if(lastCmd == 0) lastCmd = i;
 		} 
 	}	
+	printf("lastcmd: %d\n numCmds %d\n", lastCmd, numCmds);
 	if (lastCmd < numCmds && lastCmd != 0) numCmds = lastCmd;
+	printf("lastcmd: %d\n numCmds %d\n", lastCmd, numCmds);
 	cmds = removeExcess(cmds, numCmds);
-    
+    for(int i = 0; i<numCmds; i++) {
+    	printf("Cmd %d: %s\n", i, cmds[i]);
+    }
 	struct Command thisCommand = {isRunning, -1, isFor, true, cmds, numCmds, outfile, infile};
 
 	return thisCommand;
