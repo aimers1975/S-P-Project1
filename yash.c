@@ -60,9 +60,11 @@ int foreground();
 int background();
 bool resetMostRecent(struct Job*);
 void printJob(struct Job*, int, bool);
+void printDoneJob(char*,int);
 
 pid_t currentChildPID=-1;
 char* currentCmd = NULL;
+bool currentHasPipe = false;
 int lastRemovedJobId = -1;
 int jobsSize = 1;
 struct Job* jobs;
@@ -116,6 +118,9 @@ void runInputLoop(char* buf ) {
         strcpy(printBuf,buf);
         
         struct Command* thisCommand = parseInput(buf, buf2, &haspipe);
+        if(haspipe) {
+        	currentHasPipe = true;
+        }
 
         if(thisCommand == NULL) {
         	printf("There was an error with the command.\n");
@@ -131,28 +136,26 @@ void runInputLoop(char* buf ) {
         } else if(strcmp(buf, "fg") == 0) {
         	pid_t ret2 = foreground();
             int checkpid = waitpid(ret2, &status, WUNTRACED);
+            //printf("in foreground\n checkpid: %d\n ret2 %d\n", checkpid, ret2);
             while(1) {
                 //printf("In loop\n");
                 if(checkpid == ret2) {
                 	if(WIFEXITED(status)) {
-                		printf("Exited, exit status %d\n", WEXITSTATUS(status));
-                		printJob(jobs,ret2,true); 
+                		//printf("Exited, exit status %d\n", WEXITSTATUS(status));               		
+                		printDoneJob(currentCmd,lastRemovedJobId); 
                 		break;
                 	} else if (WIFSTOPPED(status)) {
                 		break;
                 	} else if (WIFSIGNALED(status)) {
-                		printf("Signal is: %d\n", WTERMSIG(status));
+                		//printf("Signal is: %d\n", WTERMSIG(status));
                         if(WTERMSIG(status) == SIGINT) {
-                        	printf("REceived quit\n");
-                        	printJob(jobs,ret2,true);   
+                        	printDoneJob(currentCmd,lastRemovedJobId);    
                         	break;
                         }	
                 	}
                 } 
             	checkpid = waitpid(ret2, &status, WUNTRACED);
-            }
-            
-            
+            } 
         	continue;
         }
 
@@ -172,7 +175,8 @@ void runInputLoop(char* buf ) {
 
         pid_t ret3 = fork();
         currentChildPID = ret3;
-        //printf("CurrentCHILDPID: %d\n", currentChildPID);
+        printf("PID2: %d Cmd: %s\n", ret3, thisCommand[0].cmd[0]);
+        printf("CurrentCHILDPID: %d\n", currentChildPID);
 
         if (ret3 == 0) 
         {
@@ -180,6 +184,7 @@ void runInputLoop(char* buf ) {
         	if(haspipe) {
                 dup2(pipefd[0],0);
                 close(pipefd[1]);
+                currentHasPipe = true;
 
         	} else if(strlen(thisCommand[0].infile) > 0) {
         		fd2 = getFileD(thisCommand[0].infile, paths, numPaths, false);
@@ -207,7 +212,6 @@ void runInputLoop(char* buf ) {
         	//printf("READER calling exec: %s\n", thisCommand[0].cmd[0]);
         	char* cmdArray[thisCommand[0].numCmds+1];
         	for (int i=0; i<thisCommand[0].numCmds; i++) {
-        		printf("Sending cmd %s\n", thisCommand[0].cmd[i]);
         		cmdArray[i] = thisCommand[0].cmd[i];
         	}
             cmdArray[thisCommand[0].numCmds] = NULL;
@@ -223,11 +227,11 @@ void runInputLoop(char* buf ) {
         } else if (haspipe) {
         	//printf("Parent here cpid: %d pid: %d\n", ret, getpid());
         	pid_t ret = fork();
-
-        	if(ret ==0) {
+            printf("Current PID: %d\n Current cmd: %s\n", ret, thisCommand[1].cmd[0]);
+        	if(ret ==0) { 
 
 	        	if(haspipe) {
-	        		//printf("Got in has pipe\n");
+	        		currentHasPipe = true;
                     dup2(pipefd[1],1);
                     close(pipefd[0]);
 
@@ -252,13 +256,17 @@ void runInputLoop(char* buf ) {
 	        			continue;
 	        		} else {
 	        			dup2(fd2,0);
-	        			printf("opened the file\n");
 	        		}
 	        	}
 
                 //TODO: do we ever see this printf? 
                 //printf("WRITER Started cpid: %d Current pid: %d\n", ret, getpid());
-                execvpe(thisCommand[1].cmd[0], thisCommand[1].cmd, environ);
+                char* cmdArray[thisCommand[1].numCmds+1];
+        	    for (int i=0; i<thisCommand[1].numCmds; i++) {
+        		    cmdArray[i] = thisCommand[1].cmd[i];
+        	    }
+                cmdArray[thisCommand[1].numCmds] = NULL;
+                execvpe(thisCommand[1].cmd[0], cmdArray, environ);
                 perror("There was an error with the command!\n");
                 if (fd1 != -1) close(fd1);
                 exit(2);
@@ -274,8 +282,8 @@ void runInputLoop(char* buf ) {
                     while(checkpid != ret && (!WIFSTOPPED(status) && !WIFEXITED(status))) {
             	        checkpid = waitpid(ret, &status, WUNTRACED);
 		            }
-		            printf("WIFSTOPPED: %d\n", WIFSTOPPED(status));
-                    printf("WIFEXITED: %d\n", WIFEXITED(status));
+		            printf("WIFSTOPPED1: %d\n", WIFSTOPPED(status));
+                    printf("WIFEXITED1: %d\n", WIFEXITED(status));
 		        } else {
 		            //printf("This is a background task\n");
 		            continue;
@@ -286,16 +294,42 @@ void runInputLoop(char* buf ) {
         }
         if(thisCommand[0].isForeground) {
             //printf("This is a forground task\n");
-            //printf("Waiting on PID: 0\n");
+
+//            int checkpid2 = waitpid(ret3, &status, WUNTRACED);
+//            while(checkpid2 != ret3 && (!WIFSTOPPED(status) && !WIFEXITED(status))) {
+//            	checkpid2 = waitpid(ret3, &status, WUNTRACED);
+ //           }
+
+
             int checkpid2 = waitpid(ret3, &status, WUNTRACED);
-            while(checkpid2 != ret3 && (!WIFSTOPPED(status) && !WIFEXITED(status))) {
-            	checkpid2 = waitpid(ret3, &status, WUNTRACED);
+            printf("Waiting on PID: %d check pid: %d\n", ret3, checkpid2);
+            while(1) {
+               //printf("In loop\n");
+                if(checkpid2 == ret3) {
+                    if(WIFEXITED(status)) {
+                        printf("Exited, exit status %d\n", WEXITSTATUS(status));
+                        printJob(jobs,ret3,true); 
+                        break;
+                    } else if (WIFSTOPPED(status)) {
+                    	kill(ret3, SIGCONT);
+                        //break;
+                    } else if (WIFSIGNALED(status)) {
+                        //printf("Signal is: %d\n", WTERMSIG(status));
+                        if(WTERMSIG(status) == SIGINT) {
+                            //printf("REceived quit\n");
+                            printJob(jobs,ret3,true);   
+                            break;
+                        }   
+                    }
+                } 
+                checkpid2 = waitpid(ret3, &status, WUNTRACED);
             }
-            printf("WIFSTOPPED: %d\n", WIFSTOPPED(status));
-            printf("WIFEXITED: %d\n", WIFEXITED(status));
+
             if(WIFEXITED(status)) {
 		 		//set current job ID?
-            }    
+            } 
+
+            currentHasPipe = false;   
 
         } else {
             //printf("This is a background task\n");
@@ -336,7 +370,6 @@ int removeJob(struct Job* jobsList, int pid) {
     	if(current->pid == pid)
     	{
     		previous->nextJob = current->nextJob;
-    		printf("Setting last removed job id: %d\n", current->id);
     		lastRemovedJobId = current->id;
             free(current);
             resetMostRecent(jobsList);
@@ -482,20 +515,23 @@ void handleSignal(int signal) {
   	        signal_name = "SIGINT";
   	        printf("signal is: %s, pid: %d, currentChildPID: %d\n", signal_name, getpid(), currentChildPID);
   	        kill(currentChildPID, SIGINT);
-  	        currentChildPID = -1;
+  	        //currentChildPID = -1;
   	        break;
   	    case SIGTSTP:
-  	        printf("Stopping: %d\n", currentChildPID); 
-  	        printf("Jobsize currently: %d\n", jobsSize);
-  	        if(lastRemovedJobId == jobsSize-1) { 
-  	            pushJob(jobs, currentCmd, false,true,lastRemovedJobId,currentChildPID);
-  	            lastRemovedJobId = -1;
+  	        if(!currentHasPipe) {
+  	            //printf("Stopping: %d\n", currentChildPID); 
+  	            //printf("Jobsize currently: %d\n", jobsSize);
+  	            if(lastRemovedJobId == jobsSize-1) { 
+  	                pushJob(jobs, currentCmd, false,true,lastRemovedJobId,currentChildPID);
+  	                lastRemovedJobId = -1;
+  	            } else {
+  	        	    pushJob(jobs, currentCmd, false,true,jobsSize,currentChildPID);
+  	        	    jobsSize++;	
+  	            }
+  	            kill(currentChildPID, SIGSTOP);
   	        } else {
-  	        	pushJob(jobs, currentCmd, false,true,jobsSize,currentChildPID);
-  	        	jobsSize++;	
+  	        	printf("Can't background a command with a pipe.\n");
   	        }
-  	        
-  	        kill(currentChildPID, SIGSTOP);
   	        break;
   	    case SIGCHLD:
   	        //signal_name = "SIGCHLD";
@@ -528,7 +564,7 @@ void* removeExcess(char** buf, int trimNum) {
 }
 
 struct Command createCommand(char* buf) {
-	printf("This starting buffer is: %s\n", buf);
+	//printf("This starting buffer is: %s\n", buf);
 	int numCmds = 1;
 	bool isFor = true;
 	char* isRunning = "Stopped";
@@ -544,7 +580,7 @@ struct Command createCommand(char* buf) {
 	char* token = strtok(buf, " ");
 	int position = 0;
 	while(token) {
-		printf("%s\n", token);
+		//printf("%s\n", token);
 		cmds[position] =token;
 		position++;
 		token = strtok(NULL, " ");
@@ -578,13 +614,8 @@ struct Command createCommand(char* buf) {
             if(lastCmd == 0) lastCmd = i;
 		} 
 	}	
-	printf("lastcmd: %d\n numCmds %d\n", lastCmd, numCmds);
 	if (lastCmd < numCmds && lastCmd != 0) numCmds = lastCmd;
-	printf("lastcmd: %d\n numCmds %d\n", lastCmd, numCmds);
 	cmds = removeExcess(cmds, numCmds);
-    for(int i = 0; i<numCmds; i++) {
-    	printf("Cmd %d: %s\n", i, cmds[i]);
-    }
 	struct Command thisCommand = {isRunning, -1, isFor, true, cmds, numCmds, outfile, infile};
 
 	return thisCommand;
@@ -681,6 +712,9 @@ void printJob(struct Job* jobsList, int pid, bool jobDone) {
     }
 }
 
+void printDoneJob(char* cmd,int jobId) {
+	printf("\n[%d] + Done  %s\n", jobId, cmd);
+}
 int foreground() 
 {
     struct Job* current = jobs;
@@ -694,7 +728,7 @@ int foreground()
     	    	printf("%s\n", currentCmd);
     	    	currentChildPID = current->pid;
     	    	lastRemovedJobId = current->id;
-    	    	printf("Thie last removed job ID: %d, jobsize is: %d\n", lastRemovedJobId, jobsSize);
+    	    	//printf("Thie last removed job ID: %d, jobsize is: %d\n", lastRemovedJobId, jobsSize);
     	    	removeJob(jobs,current->pid);
     	    	kill(current->pid, SIGCONT);
     	    	return current->pid;
